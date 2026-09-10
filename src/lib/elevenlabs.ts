@@ -232,7 +232,7 @@ export async function syncElevenLabsAgent() {
         language: agent.language,
         prompt: {
           prompt,
-          llm: "gpt-4o-mini",
+          llm: agent.voiceLlm,
           temperature: 0.3,
           tools: webhookTools(baseUrl, secret),
         },

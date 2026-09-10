@@ -12,6 +12,7 @@ const AgentInput = z.object({
   language: z.string().min(2),
   extraLanguages: z.array(z.string()),
   model: z.string().min(2),
+  voiceLlm: z.string().min(2),
   voiceId: z.string(),
 });
 

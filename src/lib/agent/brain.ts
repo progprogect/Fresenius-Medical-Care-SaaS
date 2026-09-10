@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { buildSystemPrompt } from "@/lib/agent/prompt";
+import { languageLabel } from "@/lib/languages";
 import { AGENT_TOOLS, executeTool, type ToolContext } from "@/lib/agent/tools";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 
@@ -28,24 +29,45 @@ function openaiTools(): ChatCompletionTool[] {
 }
 
 /**
- * Facts already established in this conversation, restated for the model so it
- * never asks a verified patient to identify themselves twice.
+ * State of this particular conversation, restated for the model: which
+ * language it is locked to, and the patient facts already established so a
+ * verified caller is never asked to identify themselves twice.
  */
 async function knownContext(conversationId: string) {
   const conv = await db.conversation.findUnique({
     where: { id: conversationId },
     include: { patient: true },
   });
-  if (!conv?.patient) return null;
-  const p = conv.patient;
-  const dob = p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : "unknown";
-  return `## ALREADY KNOWN — do not ask for any of this again
-Patient: ${p.firstName} ${p.lastName}
-Phone: ${p.phone}
-Date of birth: ${dob}
-Preferred language: ${p.language}
-Verified in this conversation: ${conv.verified ? "yes" : "no"}
-Use these values directly in tool calls. Address the patient by their first name.`;
+  if (!conv) return null;
+
+  const lines: string[] = [];
+  if (conv.language) {
+    lines.push(
+      `## CONVERSATION LANGUAGE: ${languageLabel(conv.language)} (${conv.language})`,
+      `Every word you write goes out in ${languageLabel(conv.language)}. This beats anything stored on the patient record.`
+    );
+  } else {
+    lines.push(
+      "## LANGUAGE NOT SET YET",
+      "Before you answer, call set_language with the language of the patient's message. Do it on this turn."
+    );
+  }
+
+  if (conv.patient) {
+    const p = conv.patient;
+    const dob = p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : "unknown";
+    lines.push(
+      "",
+      "## ALREADY KNOWN — never ask for any of this again",
+      `Patient: ${p.firstName} ${p.lastName}`,
+      `Phone: ${p.phone}`,
+      `Date of birth: ${dob}`,
+      `Verified in this conversation: ${conv.verified ? "yes" : "no"}`,
+      `Language on file: ${p.language} — a historical default only; if this conversation is in another language, that other language wins.`,
+      "Use these values directly in tool calls. Address the patient by their first name."
+    );
+  }
+  return lines.join("\n");
 }
 
 /**

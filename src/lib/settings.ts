@@ -10,7 +10,8 @@ export type AgentSettings = {
    */
   language: string;
   extraLanguages: string[];
-  model: string; // OpenAI model for text brain
+  model: string; // OpenAI model for the chat brain
+  voiceLlm: string; // LLM ElevenLabs runs for voice calls
   voiceId: string; // ElevenLabs voice, shared across every language
   elevenLabsAgentId: string;
   firstMessage: string;
@@ -56,7 +57,10 @@ const DEFAULTS: {
       "You are Nora, the friendly virtual assistant of the Fresenius Medical Care clinic network. You help patients book, view, reschedule and cancel appointments across our European clinic network. You are warm, concise and professional. You never give medical advice.",
     language: "de",
     extraLanguages: ["en", "fr", "es", "it", "pl"],
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    // A mini model kept overshooting the length and tone rules; the larger
+    // model holds them, which is what makes the call sound human.
+    model: process.env.OPENAI_MODEL || "gpt-4.1",
+    voiceLlm: "gpt-4.1",
     voiceId: "eJRhExUeshH24BIBe89c", // Kate — natural, warm, professional
     elevenLabsAgentId: "",
     firstMessage:

@@ -162,7 +162,7 @@ const listDoctors: ToolDef = {
 const verifyPatient: ToolDef = {
   name: "verify_patient",
   description:
-    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Pass the phone number and date of birth EXACTLY as the patient gave them — any spelling or ordering is understood, so never ask them to repeat it in a particular format. On success the session becomes verified.",
+    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Needs ONLY the phone number and the date of birth — never ask the patient for their name to verify them, the record already holds it. Pass both values EXACTLY as the patient gave them — any spelling or ordering is understood, so never ask them to repeat it in a particular format. On success the session becomes verified.",
   schema: z.object({
     phone: z
       .string()

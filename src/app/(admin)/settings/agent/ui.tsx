@@ -135,6 +135,14 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
             <div className="space-y-2">
               <Label>Chat model (OpenAI)</Label>
               <Input value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} />
+              <p className="text-xs text-muted-foreground">
+                Smaller models drift into long, formal answers. Downgrade only if cost matters more
+                than how the conversation reads.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Voice model (runs inside ElevenLabs)</Label>
+              <Input value={form.voiceLlm} onChange={(e) => setForm({ ...form, voiceLlm: e.target.value })} />
             </div>
             <div className="space-y-2">
               <Label>Voice (ElevenLabs)</Label>
