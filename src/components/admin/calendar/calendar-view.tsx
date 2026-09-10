@@ -49,7 +49,12 @@ type DragState = {
   pointerId: number;
   startX: number;
   startY: number;
+};
+
+type DragView = {
+  id: string;
   offsetMin: number;
+  offsetX: number;
   targetColumnKey: string;
   moved: boolean;
 };
@@ -75,9 +80,12 @@ export function CalendarView({
   const [selected, setSelected] = React.useState<CalAppointment | null>(null);
   const [newOpen, setNewOpen] = React.useState(false);
   const [refreshKey, setRefreshKey] = React.useState(0);
-  const [drag, setDrag] = React.useState<DragState | null>(null);
+  const [dragView, setDragView] = React.useState<DragView | null>(null);
   const [saving, setSaving] = React.useState(false);
   const columnRefs = React.useRef(new Map<string, HTMLDivElement>());
+  const dragRef = React.useRef<DragState | null>(null);
+  const dragViewRef = React.useRef<DragView | null>(null);
+  const commitRef = React.useRef<(view: DragView) => void>(() => {});
 
   const clinic = clinics.find((c) => c.id === clinicId) ?? clinics[0];
   const tz = clinic?.timezone ?? "Europe/Berlin";
@@ -165,62 +173,40 @@ export function CalendarView({
 
   const isDraggable = (a: CalAppointment) => a.status === "BOOKED" || a.status === "CONFIRMED";
 
-  function columnKeyAt(clientX: number, clientY: number) {
-    for (const [key, el] of columnRefs.current.entries()) {
-      const r = el.getBoundingClientRect();
-      if (clientX >= r.left && clientX <= r.right && clientY >= r.top - 40 && clientY <= r.bottom + 40)
-        return key;
-    }
-    return null;
-  }
-
   function onPointerDown(e: React.PointerEvent, a: CalAppointment, columnKey: string) {
-    if (!isDraggable(a) || saving) return;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    setDrag({
+    if (!isDraggable(a) || saving || dragRef.current) return;
+    dragRef.current = {
       appointment: a,
       originColumnKey: columnKey,
       pointerId: e.pointerId,
       startX: e.clientX,
       startY: e.clientY,
-      offsetMin: 0,
-      targetColumnKey: columnKey,
-      moved: false,
-    });
+    };
+    const initial: DragView = {
+      id: a.id, offsetMin: 0, offsetX: 0, targetColumnKey: columnKey, moved: false,
+    };
+    dragViewRef.current = initial;
+    setDragView(initial);
   }
 
-  function onPointerMove(e: React.PointerEvent) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const dy = e.clientY - drag.startY;
-    const dx = e.clientX - drag.startX;
-    const moved = drag.moved || Math.abs(dy) > DRAG_THRESHOLD_PX || Math.abs(dx) > DRAG_THRESHOLD_PX;
-    if (!moved) return;
-    const rawMin = dy / PX_PER_MIN;
-    const offsetMin = Math.round(rawMin / SNAP_MIN) * SNAP_MIN;
-    const targetColumnKey = columnKeyAt(e.clientX, e.clientY) ?? drag.targetColumnKey;
-    setDrag({ ...drag, offsetMin, targetColumnKey, moved: true });
-  }
+  const commit = (viewState: DragView) => {
+    const session = dragRef.current;
+    if (!session) return;
+    const a = session.appointment;
 
-  async function onPointerUp(e: React.PointerEvent) {
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const current = drag;
-    setDrag(null);
-
-    if (!current.moved) {
-      setSelected(current.appointment);
+    if (!viewState.moved) {
+      setSelected(a);
       return;
     }
-    const targetColumn = columns.find((c) => c.key === current.targetColumnKey);
+    const targetColumn = columns.find((c) => c.key === viewState.targetColumnKey);
     if (!targetColumn) return;
 
-    const a = current.appointment;
-    const originalMin = minutesOf(a.startsAt);
-    const newMin = originalMin + current.offsetMin;
-    const duration = a.service.durationMin;
-    const sameSlot = current.offsetMin === 0 && current.targetColumnKey === current.originColumnKey;
+    const newMin = minutesOf(a.startsAt) + viewState.offsetMin;
+    const sameSlot =
+      viewState.offsetMin === 0 && viewState.targetColumnKey === session.originColumnKey;
     if (sameSlot) return;
 
-    if (newMin < START_HOUR * 60 || newMin + duration > END_HOUR * 60) {
+    if (newMin < START_HOUR * 60 || newMin + a.service.durationMin > END_HOUR * 60) {
       toast.error(`Outside the visible day (${START_HOUR}:00–${END_HOUR}:00)`);
       return;
     }
@@ -231,25 +217,97 @@ export function CalendarView({
     const newDoctorId = view === "day" ? targetColumn.doctorId : a.doctor.id;
 
     setSaving(true);
-    const res = await rescheduleAppointmentAction({
+    void rescheduleAppointmentAction({
       appointmentId: a.id,
       version: a.version,
       newStartsAtIso: newStart.toISOString(),
       newDoctorId,
-    });
-    setSaving(false);
-    if (!res.ok) {
-      toast.error(res.error);
-      refresh();
-      return;
+    })
+      .then((res) => {
+        if (!res.ok) toast.error(res.error);
+        else
+          toast.success(
+            `Moved to ${formatInTimeZone(newStart, tz, "EEE d MMM, HH:mm")}${
+              newDoctorId && newDoctorId !== a.doctor.id ? ` · ${targetColumn.title}` : ""
+            }`
+          );
+      })
+      .finally(() => {
+        setSaving(false);
+        refresh();
+      });
+  };
+
+  // Kept in a ref so the window listeners below never call a stale closure.
+  React.useEffect(() => {
+    commitRef.current = commit;
+  });
+
+  /**
+   * Drag is tracked on window, not on the block: the block can re-render or
+   * move between columns mid-gesture, and an element-bound pointerup would then
+   * never fire, stranding the appointment mid-drag.
+   */
+  React.useEffect(() => {
+    if (!dragView) return;
+
+    function currentColumnKey(clientX: number, clientY: number) {
+      for (const [key, el] of columnRefs.current.entries()) {
+        const r = el.getBoundingClientRect();
+        if (clientX >= r.left && clientX <= r.right && clientY >= r.top - 48 && clientY <= r.bottom + 48)
+          return key;
+      }
+      return null;
     }
-    toast.success(
-      `Moved to ${formatInTimeZone(newStart, tz, "EEE d MMM, HH:mm")}${
-        newDoctorId && newDoctorId !== a.doctor.id ? ` · ${targetColumn.title}` : ""
-      }`
-    );
-    refresh();
-  }
+
+    function onMove(e: PointerEvent) {
+      const session = dragRef.current;
+      const prev = dragViewRef.current;
+      if (!session || !prev || e.pointerId !== session.pointerId) return;
+      const dy = e.clientY - session.startY;
+      const dx = e.clientX - session.startX;
+      const moved = prev.moved || Math.abs(dy) > DRAG_THRESHOLD_PX || Math.abs(dx) > DRAG_THRESHOLD_PX;
+      if (!moved) return;
+      const offsetMin = Math.round(dy / PX_PER_MIN / SNAP_MIN) * SNAP_MIN;
+      const targetColumnKey = currentColumnKey(e.clientX, e.clientY) ?? prev.targetColumnKey;
+      const originEl = columnRefs.current.get(session.originColumnKey);
+      const targetEl = columnRefs.current.get(targetColumnKey);
+      const offsetX =
+        originEl && targetEl
+          ? targetEl.getBoundingClientRect().left - originEl.getBoundingClientRect().left
+          : 0;
+      const next: DragView = { ...prev, offsetMin, offsetX, targetColumnKey, moved: true };
+      dragViewRef.current = next;
+      setDragView(next);
+    }
+
+    function onUp(e: PointerEvent) {
+      const session = dragRef.current;
+      const finalView = dragViewRef.current;
+      if (!session || e.pointerId !== session.pointerId) return;
+      setDragView(null);
+      // Commit outside the state updater: it triggers navigation and toasts,
+      // which must never run during React's render phase.
+      if (finalView) commitRef.current(finalView);
+      dragRef.current = null;
+      dragViewRef.current = null;
+    }
+
+    function onCancel() {
+      dragRef.current = null;
+      dragViewRef.current = null;
+      setDragView(null);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    };
+  }, [dragView]);
 
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
   const title =
@@ -351,6 +409,11 @@ export function CalendarView({
           <Badge variant="outline" className="font-normal">{hiddenCount} hidden by filters</Badge>
         )}
         {saving && <Badge variant="secondary" className="font-normal">saving…</Badge>}
+        {dragView?.moved && (
+          <Badge variant="secondary" className="font-normal">
+            drop to move · release outside the grid to keep the current time
+          </Badge>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border bg-background">
@@ -387,7 +450,7 @@ export function CalendarView({
                 endMin: minutesOf(a.startsAt) + a.service.durationMin,
               }));
               const { placed, laneCount } = packLanes(items);
-              const isDropTarget = drag?.moved && drag.targetColumnKey === col.key;
+              const isDropTarget = dragView?.moved && dragView.targetColumnKey === col.key;
               return (
                 <div
                   key={col.key}
@@ -413,25 +476,20 @@ export function CalendarView({
                       />
                     ))}
                     {placed.map(({ item, laneIdx }) => {
-                      const dragging = drag?.appointment.id === item.a.id && drag.moved;
-                      const shownStart = dragging ? item.startMin + drag.offsetMin : item.startMin;
+                      const dragging = dragView?.id === item.a.id && dragView.moved;
+                      const shownStart = dragging ? item.startMin + dragView.offsetMin : item.startMin;
                       const top = (shownStart - START_HOUR * 60) * PX_PER_MIN;
                       const height = Math.max(22, (item.endMin - item.startMin) * PX_PER_MIN - 2);
                       const width = 100 / laneCount;
                       const cancelled = item.a.status === "CANCELLED";
                       const done = item.a.status === "COMPLETED" || item.a.status === "NO_SHOW";
                       const movable = isDraggable(item.a);
-                      // While dragging, the block follows the pointer into the hovered column.
-                      if (dragging && drag.targetColumnKey !== col.key) return null;
                       return (
                         <div
                           key={item.a.id}
                           role="button"
                           tabIndex={0}
                           onPointerDown={(e) => onPointerDown(e, item.a, col.key)}
-                          onPointerMove={onPointerMove}
-                          onPointerUp={onPointerUp}
-                          onPointerCancel={() => setDrag(null)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
@@ -454,6 +512,7 @@ export function CalendarView({
                               : `color-mix(in oklab, ${item.a.doctor.color} 45%, white)`,
                             opacity: cancelled ? 0.6 : 1,
                             touchAction: "none",
+                            transform: dragging ? `translateX(${dragView.offsetX}px)` : undefined,
                           }}
                           title={
                             movable
