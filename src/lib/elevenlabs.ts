@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AGENT_TOOLS } from "@/lib/agent/tools";
 import { buildCalendarBlock, buildSystemPrompt, CALENDAR_VARIABLE } from "@/lib/agent/prompt";
+import { db } from "@/lib/db";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { languageLabel } from "@/lib/languages";
 import { createHash } from "node:crypto";
@@ -112,6 +113,12 @@ function webhookTools(baseUrl: string, secret: string) {
         type: "string",
         dynamic_variable: "system__conversation_id",
       },
+      // Supplied by the widget so a voice call writes into the same
+      // conversation as the chat beside it, instead of a parallel one.
+      app_conversation_id: {
+        type: "string",
+        dynamic_variable: CONVERSATION_VARIABLE,
+      },
     };
     return {
       type: "webhook",
@@ -136,6 +143,32 @@ function webhookTools(baseUrl: string, secret: string) {
  * agent's primary language is "en", which is why an English-first agent can
  * never speak good German.
  */
+/** Dynamic variable carrying our own conversation id into a voice session. */
+export const CONVERSATION_VARIABLE = "app_conversation_id";
+
+/**
+ * ElevenLabs drops `built_in_tools` whenever the same request also carries the
+ * inline `tools` array, so the system tools have to be written on their own
+ * afterwards. Verified against the API: sending both keeps only `tools`.
+ */
+const BUILT_IN_TOOLS = {
+  // Lets the agent actually hang up once the patient is done, instead of
+  // leaving a finished call open.
+  end_call: {
+    name: "end_call",
+    description:
+      "Hang up. Use only after the patient has confirmed they need nothing else and you have said goodbye.",
+    params: { system_tool_type: "end_call" },
+  },
+  // Switches the spoken language of the session, not just the written reply.
+  language_detection: {
+    name: "language_detection",
+    description:
+      "Switch the spoken language of the call when the patient is speaking another supported language. Use it together with set_language, and never to drift back to the default.",
+    params: { system_tool_type: "language_detection" },
+  },
+};
+
 const ENGLISH_ONLY_TTS = "eleven_turbo_v2";
 const MULTILINGUAL_TTS = "eleven_turbo_v2_5";
 
@@ -236,6 +269,11 @@ export async function syncElevenLabsAgent() {
           temperature: 0.3,
           tools: webhookTools(baseUrl, secret),
         },
+        dynamic_variables: {
+          // A call started outside the widget (a phone call) has no app
+          // conversation, so the variable needs a default or the session fails.
+          dynamic_variable_placeholders: { [CONVERSATION_VARIABLE]: "" },
+        },
       },
       tts: {
         voice_id: agent.voiceId,
@@ -257,11 +295,21 @@ export async function syncElevenLabsAgent() {
 
   const languages = [agent.language, ...extras].map(languageLabel);
 
+  async function enableBuiltInTools(agentId: string) {
+    await el(`/v1/convai/agents/${agentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        conversation_config: { agent: { prompt: { built_in_tools: BUILT_IN_TOOLS } } },
+      }),
+    });
+  }
+
   if (agent.elevenLabsAgentId) {
     await el(`/v1/convai/agents/${agent.elevenLabsAgentId}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     });
+    await enableBuiltInTools(agent.elevenLabsAgentId);
     return { agentId: agent.elevenLabsAgentId, created: false, languages, multilingual };
   }
 
@@ -270,6 +318,7 @@ export async function syncElevenLabsAgent() {
     body: JSON.stringify(body),
   })) as { agent_id: string };
   await saveSettings("agent", { elevenLabsAgentId: created.agent_id });
+  await enableBuiltInTools(created.agent_id);
   return { agentId: created.agent_id, created: true, languages, multilingual };
 }
 
@@ -277,15 +326,29 @@ export async function syncElevenLabsAgent() {
  * Signed URL plus the per-call variables the agent's prompt expects, so the
  * browser widget can open a private-agent voice session that knows today's date.
  */
-export async function getSignedUrl() {
+export async function getSignedUrl(existingConversationId?: string) {
   const agent = await getSettings("agent");
   if (!agent.elevenLabsAgentId) throw new Error("Voice agent is not provisioned yet");
+
+  // One conversation per visitor, whether they type or talk: the widget hands
+  // back the id it already has, so the transcript stays a single thread.
+  const existing = existingConversationId
+    ? await db.conversation.findUnique({ where: { id: existingConversationId } })
+    : null;
+  const conversation =
+    existing ?? (await db.conversation.create({ data: { channel: "WIDGET_VOICE" } }));
+
   const data = (await el(
     `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agent.elevenLabsAgentId)}`
   )) as { signed_url: string };
+
   return {
     signedUrl: data.signed_url,
-    dynamicVariables: { [CALENDAR_VARIABLE]: await buildCalendarBlock() },
+    conversationId: conversation.id,
+    dynamicVariables: {
+      [CALENDAR_VARIABLE]: await buildCalendarBlock(),
+      [CONVERSATION_VARIABLE]: conversation.id,
+    },
     languages: [agent.language, ...agent.extraLanguages.filter((c) => c !== agent.language)],
   };
 }

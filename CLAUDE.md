@@ -21,6 +21,13 @@ See README.md and docs/ARCHITECTURE.md first.
   patient already said. Phone numbers and dates of birth are parsed tolerantly in
   `src/lib/patient-input.ts`; when a value is unclear the agent reads back its understanding for
   a yes/no instead of asking for a repeat.
+- Voice and chat share ONE conversation: the widget passes its conversation id into the call as
+  the `app_conversation_id` dynamic variable, the tools webhook and the transcript endpoint write
+  into that row, and text typed during a live call goes through `conversation.sendUserMessage`
+  rather than the chat API.
+- ElevenLabs drops `built_in_tools` when the same request also sends the inline `tools` array, so
+  `syncElevenLabsAgent` writes the system tools (`end_call`, `language_detection`) in a second
+  PATCH. Verified against the API.
 - Escalations: `escalate_to_human` sets `Conversation.status = NEEDS_HUMAN`. Staff claim one
   through `claimConversationAction`, which is first-come and writes `assignedToId`; the queue is
   pinned above the conversation log and is never hidden by the filters.

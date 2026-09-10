@@ -53,6 +53,17 @@ function ChatWidgetInner() {
   const [voiceOpen, setVoiceOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const voiceExternalId = React.useRef<string | null>(null);
+  // Mirrors the state so the voice callbacks, which outlive a render, always
+  // post transcripts into the conversation that is actually current.
+  const conversationIdRef = React.useRef<string | null>(conversationId);
+
+  const rememberConversation = React.useCallback((id: string) => {
+    conversationIdRef.current = id;
+    setConversationId(id);
+    try {
+      localStorage.setItem("clinic-widget-conversation", id);
+    } catch {}
+  }, []);
 
   const conversation = useConversation({
     onConnect: ({ conversationId: voiceId }: { conversationId: string }) => {
@@ -68,12 +79,14 @@ function ChatWidgetInner() {
         if (onlySeeded && role === "assistant") return [incoming];
         return [...prev, incoming];
       });
-      if (voiceExternalId.current) {
+      const convId = conversationIdRef.current;
+      if (convId) {
         fetch("/api/voice/transcript", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            externalId: voiceExternalId.current,
+            conversationId: convId,
+            externalId: voiceExternalId.current ?? undefined,
             role: msg.source === "user" ? "user" : "ai",
             text: msg.message,
           }),
@@ -110,6 +123,21 @@ function ChatWidgetInner() {
     setInput("");
     setSlots([]);
     setMessages((prev) => [...prev, { id: nextId(), role: "user", text: trimmed }]);
+
+    // While a call is live the agent is listening, not polling our chat API.
+    // Typed text is handed to the same session so both stay one conversation.
+    if (voiceOpen) {
+      try {
+        conversation.sendUserMessage(trimmed);
+      } catch {
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: "assistant", text: "That did not reach the call — please say it instead." },
+        ]);
+      }
+      return;
+    }
+
     setBusy(true);
     try {
       const res = await fetch("/api/agent/chat", {
@@ -119,10 +147,7 @@ function ChatWidgetInner() {
       });
       const data = await res.json();
       if (data.conversationId && data.conversationId !== conversationId) {
-        setConversationId(data.conversationId);
-        try {
-          localStorage.setItem("clinic-widget-conversation", data.conversationId);
-        } catch {}
+        rememberConversation(data.conversationId);
       }
       setMessages((prev) => [
         ...prev.map((m) => (m.seeded ? { ...m, seeded: false } : m)),
@@ -145,9 +170,12 @@ function ChatWidgetInner() {
   async function startVoice() {
     if (!config?.voiceReady) return;
     try {
-      const res = await fetch("/api/voice/signed-url");
+      const res = await fetch(
+        `/api/voice/signed-url${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      if (data.conversationId) rememberConversation(data.conversationId);
       // Open the call in the visitor's own language when we support it, so the
       // greeting already matches; the agent still switches if they speak another.
       const browserLanguage = normalizeLanguageTag(navigator.language);

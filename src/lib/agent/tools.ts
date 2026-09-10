@@ -570,6 +570,39 @@ const setLanguage: ToolDef = {
   },
 };
 
+const closeConversation: ToolDef = {
+  name: "close_conversation",
+  description:
+    "Call this when the patient confirms they need nothing else — after a goodbye, or when they say the problem is solved. It closes the conversation in the clinic system. On a voice call, call end_call straight after so the line actually hangs up. Never call it while something is still unfinished.",
+  schema: z.object({
+    summary: z
+      .string()
+      .describe("One English sentence for staff: what the patient wanted and what happened."),
+  }),
+  execute: async (args, ctx) => {
+    const conv = await db.conversation.findUnique({ where: { id: ctx.conversationId } });
+    if (!conv) return { error: "NO_CONVERSATION" };
+    // An escalation stays open until a human closes it.
+    if (conv.status === "NEEDS_HUMAN")
+      return {
+        closed: false,
+        hint: "This conversation is waiting for a colleague, so it stays open. Say goodbye without closing it.",
+      };
+    await db.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { status: "RESOLVED", endedAt: new Date(), summary: String(args.summary).slice(0, 500) },
+    });
+    await logAudit({
+      actor: actorFor(ctx),
+      action: "CONVERSATION_CLOSED",
+      entity: "Conversation",
+      entityId: ctx.conversationId,
+      details: { summary: String(args.summary).slice(0, 500) },
+    });
+    return { closed: true };
+  },
+};
+
 const escalate: ToolDef = {
   name: "escalate_to_human",
   description:
@@ -610,6 +643,7 @@ export const AGENT_TOOLS: ToolDef[] = [
   rescheduleTool,
   cancelTool,
   escalate,
+  closeConversation,
 ];
 
 export const toolByName = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
