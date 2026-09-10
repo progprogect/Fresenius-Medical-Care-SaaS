@@ -47,8 +47,11 @@ and in Railway service variables.
 3. Set the remaining variables from `.env.example`
    (`AUTH_SECRET`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `TWILIO_*`, `AGENT_TOOLS_SECRET`,
    and `APP_BASE_URL=https://<your-domain>.up.railway.app`).
-4. Set the **pre-deploy command**: `npx prisma migrate deploy`
-   (first deploy only, optionally seed: `npx prisma migrate deploy && npx tsx prisma/seed.ts`).
+4. Deploy behaviour is version-controlled in `.railway/railway.ts` (Railway Infrastructure as
+   Code): the pre-deploy step runs `prisma migrate deploy` and then `prisma/bootstrap.ts`, which
+   seeds the demo dataset **only when the database is empty**, so later deploys never touch real
+   data. For a service created before that file existed, set the same pre-deploy command under
+   Settings → Deploy.
 5. Deploy. Then in the admin panel open **AI agent → Re-sync agent** so the ElevenLabs webhook
    tools point at the public Railway URL (voice booking needs a public URL).
 6. Optional: point the Twilio messaging webhook to `https://<domain>/api/twilio/inbound` and
