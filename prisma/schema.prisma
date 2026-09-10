@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ Access control ============
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         UserRole @default(STAFF)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// ============ Catalog ============
+
+model Clinic {
+  id        String   @id @default(cuid())
+  name      String
+  city      String
+  country   String
+  address   String
+  phone     String
+  timezone  String   @default("Europe/Berlin")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  doctors      Doctor[]
+  appointments Appointment[]
+}
+
+model Doctor {
+  id        String   @id @default(cuid())
+  name      String
+  title     String   @default("MD")
+  specialty String
+  bio       String   @default("")
+  languages String[] @default([])
+  color     String   @default("#0d9488") // calendar accent
+  active    Boolean  @default(true)
+  clinicId  String
+  clinic    Clinic   @relation(fields: [clinicId], references: [id])
+
+  services     DoctorService[]
+  workingHours WorkingHours[]
+  appointments Appointment[]
+}
+
+model Service {
+  id               String  @id @default(cuid())
+  name             String
+  category         String
+  durationMin      Int
+  price            Int // in EUR cents
+  description      String  @default("")
+  prepInstructions String  @default("")
+  active           Boolean @default(true)
+
+  doctors      DoctorService[]
+  appointments Appointment[]
+}
+
+model DoctorService {
+  doctorId  String
+  serviceId String
+  doctor    Doctor  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@id([doctorId, serviceId])
+}
+
+model WorkingHours {
+  id       String @id @default(cuid())
+  doctorId String
+  doctor   Doctor @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  weekday  Int // 0 = Sunday ... 6 = Saturday
+  startMin Int // minutes from midnight, clinic-local
+  endMin   Int
+
+  @@index([doctorId, weekday])
+}
+
+// ============ Patients & appointments ============
+
+model Patient {
+  id             String    @id @default(cuid())
+  firstName      String
+  lastName       String
+  phone          String    @unique
+  email          String?
+  dateOfBirth    DateTime?
+  language       String    @default("en")
+  whatsappOptIn  Boolean   @default(true)
+  notes          String    @default("")
+  createdAt      DateTime  @default(now())
+
+  appointments  Appointment[]
+  conversations Conversation[]
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentSource {
+  WIDGET_CHAT
+  WIDGET_VOICE
+  PHONE
+  WHATSAPP
+  MANUAL
+  BACKFILL
+}
+
+model Appointment {
+  id           String            @id @default(cuid())
+  patientId    String
+  clinicId     String
+  doctorId     String
+  serviceId    String
+  startsAt     DateTime
+  endsAt       DateTime
+  status       AppointmentStatus @default(BOOKED)
+  source       AppointmentSource @default(MANUAL)
+  notes        String            @default("")
+  cancelReason String?
+  cancelledAt  DateTime?
+  version      Int               @default(1) // optimistic concurrency (UC-3 step 11)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  patient Patient @relation(fields: [patientId], references: [id])
+  clinic  Clinic  @relation(fields: [clinicId], references: [id])
+  doctor  Doctor  @relation(fields: [doctorId], references: [id])
+  service Service @relation(fields: [serviceId], references: [id])
+
+  slotOffers SlotOffer[]
+
+  @@index([doctorId, startsAt])
+  @@index([clinicId, startsAt])
+  @@index([patientId, startsAt])
+}
+
+// ============ Conversations (chat / voice / phone) ============
+
+enum ConversationChannel {
+  WIDGET_CHAT
+  WIDGET_VOICE
+  PHONE
+  WHATSAPP
+}
+
+enum ConversationStatus {
+  ACTIVE
+  RESOLVED
+  NEEDS_HUMAN
+}
+
+model Conversation {
+  id                String              @id @default(cuid())
+  channel           ConversationChannel
+  status            ConversationStatus  @default(ACTIVE)
+  patientId         String?
+  patient           Patient?            @relation(fields: [patientId], references: [id])
+  verified          Boolean             @default(false) // UC-1 verified session
+  externalId        String? // ElevenLabs conversation id
+  escalationReason  String?
+  summary           String?
+  startedAt         DateTime            @default(now())
+  endedAt           DateTime?
+
+  messages Message[]
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String
+  toolName       String?
+  toolPayload    Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ============ Backfill (earlier-slot offers) ============
+
+enum OfferStatus {
+  PENDING
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  SUPERSEDED
+}
+
+model SlotOffer {
+  id                String      @id @default(cuid())
+  appointmentId     String
+  appointment       Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  proposedStartsAt  DateTime
+  proposedEndsAt    DateTime
+  proposedDoctorId  String
+  channel           String // whatsapp | sms | widget | demo
+  status            OfferStatus @default(PENDING)
+  token             String      @unique
+  messagePreview    String      @default("")
+  expiresAt         DateTime
+  sentAt            DateTime?
+  respondedAt       DateTime?
+  createdAt         DateTime    @default(now())
+
+  @@index([status, expiresAt])
+}
+
+// ============ Audit trail (UC-1 step 9, UC-3 step 15) ============
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String // ai-agent | user:<id> | patient:<id> | system
+  action    String // e.g. VERIFY_PATIENT, BOOK, RESCHEDULE, CANCEL, OFFER_ACCEPTED
+  entity    String // e.g. Appointment, Patient, Conversation
+  entityId  String?
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// ============ Settings (key-value) ============
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

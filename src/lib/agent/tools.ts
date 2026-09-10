@@ -1,0 +1,497 @@
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { logAudit } from "@/lib/audit";
+import {
+  bookAppointment,
+  cancelAppointment,
+  findAvailableSlots,
+  rescheduleAppointment,
+  SchedulingError,
+} from "@/lib/scheduling";
+import { createOffersForFreedSlot } from "@/lib/backfill";
+import { fmtClinic } from "@/lib/format";
+import { formatInTimeZone } from "date-fns-tz";
+
+/**
+ * Single tool registry shared by the OpenAI text brain and the ElevenLabs
+ * voice agent (via webhook endpoints). Context = our Conversation row, which
+ * carries the verified-patient session (UC-1).
+ */
+
+export type ToolContext = {
+  conversationId: string;
+};
+
+type ToolDef = {
+  name: string;
+  description: string;
+  schema: z.ZodObject<z.ZodRawShape>;
+  execute: (args: Record<string, unknown>, ctx: ToolContext) => Promise<unknown>;
+};
+
+function slotRef(doctorId: string, startsAt: Date) {
+  return `${doctorId}@${startsAt.toISOString()}`;
+}
+function parseSlotRef(ref: string) {
+  const at = ref.lastIndexOf("@");
+  if (at < 1) throw new SchedulingError("BAD_SLOT_REF", "Invalid slot reference");
+  const doctorId = ref.slice(0, at);
+  const startsAt = new Date(ref.slice(at + 1));
+  if (isNaN(startsAt.getTime()))
+    throw new SchedulingError("BAD_SLOT_REF", "Invalid slot reference date");
+  return { doctorId, startsAt };
+}
+
+async function getConversation(ctx: ToolContext) {
+  const conv = await db.conversation.findUnique({
+    where: { id: ctx.conversationId },
+    include: { patient: true },
+  });
+  if (!conv) throw new SchedulingError("NO_CONVERSATION", "Conversation not found");
+  return conv;
+}
+
+async function requireVerifiedPatient(ctx: ToolContext) {
+  const conv = await getConversation(ctx);
+  if (!conv.verified || !conv.patient)
+    throw new SchedulingError(
+      "NOT_VERIFIED",
+      "The caller is not verified yet. Use verify_patient (phone + date of birth) or register_patient for a new patient before accessing appointments."
+    );
+  return { conv, patient: conv.patient };
+}
+
+function normalizePhone(raw: string) {
+  let p = raw.replace(/[\s\-().]/g, "");
+  if (p.startsWith("00")) p = `+${p.slice(2)}`;
+  return p;
+}
+
+const actorFor = (ctx: ToolContext) => `ai-agent:${ctx.conversationId}`;
+
+// ---------------------------------------------------------------- tools ----
+
+const listClinics: ToolDef = {
+  name: "list_clinics",
+  description:
+    "List clinics of the network, optionally filtered by city or country. Use it to tell the patient where we operate and to pick a clinic.",
+  schema: z.object({
+    city: z.string().optional().describe("Filter by city name, e.g. 'Berlin'"),
+    country: z.string().optional().describe("Filter by country name, e.g. 'Germany'"),
+  }),
+  execute: async (args) => {
+    const where: Record<string, unknown> = { active: true };
+    if (args.city) where.city = { contains: String(args.city), mode: "insensitive" };
+    if (args.country) where.country = { contains: String(args.country), mode: "insensitive" };
+    const clinics = await db.clinic.findMany({
+      where,
+      orderBy: [{ country: "asc" }, { city: "asc" }],
+      include: { _count: { select: { doctors: true } } },
+    });
+    return clinics.map((c) => ({
+      clinicId: c.id,
+      name: c.name,
+      city: c.city,
+      country: c.country,
+      address: c.address,
+      phone: c.phone,
+      timezone: c.timezone,
+      doctors: c._count.doctors,
+    }));
+  },
+};
+
+const listServices: ToolDef = {
+  name: "list_services",
+  description:
+    "List medical services (procedures) we offer with duration and price. Use it to help the patient choose the right procedure.",
+  schema: z.object({}),
+  execute: async () => {
+    const services = await db.service.findMany({ where: { active: true }, orderBy: { category: "asc" } });
+    return services.map((s) => ({
+      serviceId: s.id,
+      name: s.name,
+      category: s.category,
+      durationMin: s.durationMin,
+      priceEur: s.price / 100,
+      description: s.description,
+      preparation: s.prepInstructions,
+    }));
+  },
+};
+
+const listDoctors: ToolDef = {
+  name: "list_doctors",
+  description:
+    "List doctors with specialty, bio and languages. Filter by clinic and/or service. Use bios to recommend the right doctor and explain why.",
+  schema: z.object({
+    clinicId: z.string().optional(),
+    serviceId: z.string().optional(),
+  }),
+  execute: async (args) => {
+    const doctors = await db.doctor.findMany({
+      where: {
+        active: true,
+        ...(args.clinicId ? { clinicId: String(args.clinicId) } : {}),
+        ...(args.serviceId
+          ? { services: { some: { serviceId: String(args.serviceId) } } }
+          : {}),
+      },
+      include: { clinic: true, services: { include: { service: true } } },
+      orderBy: { name: "asc" },
+    });
+    return doctors.map((d) => ({
+      doctorId: d.id,
+      name: `${d.title} ${d.name}`,
+      specialty: d.specialty,
+      bio: d.bio,
+      languages: d.languages,
+      clinic: `${d.clinic.name}, ${d.clinic.city}`,
+      clinicId: d.clinicId,
+      services: d.services.map((s) => s.service.name),
+    }));
+  },
+};
+
+const verifyPatient: ToolDef = {
+  name: "verify_patient",
+  description:
+    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Match phone number + date of birth. On success the session becomes verified.",
+  schema: z.object({
+    phone: z.string().describe("Patient phone in international format, e.g. +4915112345678"),
+    dateOfBirth: z
+      .string()
+      .describe("Date of birth as YYYY-MM-DD"),
+  }),
+  execute: async (args, ctx) => {
+    const phone = normalizePhone(String(args.phone));
+    const patient = await db.patient.findUnique({ where: { phone } });
+    const dobOk =
+      patient?.dateOfBirth &&
+      formatInTimeZone(patient.dateOfBirth, "UTC", "yyyy-MM-dd") === String(args.dateOfBirth);
+    if (!patient || !dobOk) {
+      await logAudit({
+        actor: actorFor(ctx),
+        action: "VERIFY_FAILED",
+        entity: "Conversation",
+        entityId: ctx.conversationId,
+        details: { phone },
+      });
+      return {
+        verified: false,
+        hint: "No match for this phone + date of birth. Ask the caller to double-check, or offer to register as a new patient, or escalate to a human.",
+      };
+    }
+    await db.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { verified: true, patientId: patient.id },
+    });
+    await logAudit({
+      actor: actorFor(ctx),
+      action: "VERIFY_OK",
+      entity: "Patient",
+      entityId: patient.id,
+      details: { conversationId: ctx.conversationId },
+    });
+    return {
+      verified: true,
+      patientId: patient.id,
+      firstName: patient.firstName,
+      lastName: patient.lastName,
+    };
+  },
+};
+
+const registerPatient: ToolDef = {
+  name: "register_patient",
+  description:
+    "Register a NEW patient (when no existing record). Collect first name, last name, phone, date of birth; email optional. The session becomes verified for this new patient.",
+  schema: z.object({
+    firstName: z.string(),
+    lastName: z.string(),
+    phone: z.string().describe("International format, e.g. +4915112345678"),
+    dateOfBirth: z.string().describe("YYYY-MM-DD"),
+    email: z.string().optional(),
+  }),
+  execute: async (args, ctx) => {
+    const phone = normalizePhone(String(args.phone));
+    const existing = await db.patient.findUnique({ where: { phone } });
+    if (existing)
+      return {
+        error: "PHONE_EXISTS",
+        hint: "A patient with this phone already exists. Use verify_patient with phone + date of birth instead.",
+      };
+    const dob = new Date(`${args.dateOfBirth}T00:00:00Z`);
+    if (isNaN(dob.getTime())) return { error: "BAD_DOB", hint: "Date of birth must be YYYY-MM-DD" };
+    const patient = await db.patient.create({
+      data: {
+        firstName: String(args.firstName),
+        lastName: String(args.lastName),
+        phone,
+        email: args.email ? String(args.email) : null,
+        dateOfBirth: dob,
+      },
+    });
+    await db.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { verified: true, patientId: patient.id },
+    });
+    await logAudit({
+      actor: actorFor(ctx),
+      action: "PATIENT_REGISTERED",
+      entity: "Patient",
+      entityId: patient.id,
+    });
+    return { patientId: patient.id, registered: true, verified: true };
+  },
+};
+
+const getMyAppointments: ToolDef = {
+  name: "get_my_appointments",
+  description:
+    "List the verified patient's upcoming appointments (requires verification first). Returns appointmentId and version needed for reschedule/cancel.",
+  schema: z.object({}),
+  execute: async (_args, ctx) => {
+    const { patient } = await requireVerifiedPatient(ctx);
+    const appts = await db.appointment.findMany({
+      where: { patientId: patient.id, status: { in: ["BOOKED", "CONFIRMED"] }, startsAt: { gte: new Date() } },
+      include: { clinic: true, doctor: true, service: true },
+      orderBy: { startsAt: "asc" },
+    });
+    return appts.map((a) => ({
+      appointmentId: a.id,
+      version: a.version,
+      service: a.service.name,
+      doctor: `${a.doctor.title} ${a.doctor.name}`,
+      clinic: `${a.clinic.name}, ${a.clinic.city}`,
+      when: fmtClinic(a.startsAt, a.clinic.timezone),
+      startsAtIso: a.startsAt.toISOString(),
+      status: a.status,
+    }));
+  },
+};
+
+const findSlots: ToolDef = {
+  name: "find_slots",
+  description:
+    "Find available appointment slots for a service. Optionally filter by clinic, doctor, start date and time of day. Present 2-3 best options to the patient. Each slot has a slotRef used for booking.",
+  schema: z.object({
+    serviceId: z.string(),
+    clinicId: z.string().optional(),
+    doctorId: z.string().optional(),
+    fromDate: z.string().optional().describe("Earliest date YYYY-MM-DD (clinic local)"),
+    timeOfDay: z.enum(["morning", "afternoon", "evening", "any"]).optional(),
+    days: z.number().optional().describe("How many days ahead to search (default 7)"),
+  }),
+  execute: async (args, ctx) => {
+    void ctx;
+    const fromDate = args.fromDate ? new Date(`${args.fromDate}T00:00:00Z`) : undefined;
+    const slots = await findAvailableSlots({
+      serviceId: String(args.serviceId),
+      clinicId: args.clinicId ? String(args.clinicId) : undefined,
+      doctorId: args.doctorId ? String(args.doctorId) : undefined,
+      fromDate,
+      days: args.days ? Number(args.days) : 7,
+      limit: 60,
+    });
+    const tod = (args.timeOfDay as string) || "any";
+    const filtered = slots.filter((s) => {
+      if (tod === "any") return true;
+      const hour = Number(formatInTimeZone(s.startsAt, s.timezone, "H"));
+      if (tod === "morning") return hour < 12;
+      if (tod === "afternoon") return hour >= 12 && hour < 17;
+      return hour >= 17;
+    });
+    return filtered.slice(0, 12).map((s) => ({
+      slotRef: slotRef(s.doctorId, s.startsAt),
+      when: fmtClinic(s.startsAt, s.timezone),
+      startsAtIso: s.startsAt.toISOString(),
+      doctor: s.doctorName,
+      clinic: `${s.clinicName}, ${s.clinicCity}`,
+    }));
+  },
+};
+
+const bookTool: ToolDef = {
+  name: "book_appointment",
+  description:
+    "Book an appointment for the verified patient into a slot from find_slots. ALWAYS read the details back and get an explicit yes from the patient before calling this.",
+  schema: z.object({
+    serviceId: z.string(),
+    slotRef: z.string().describe("slotRef copied EXACTLY from a find_slots result in this conversation. Never construct or guess it. If you have no fresh slotRef, call find_slots first."),
+    notes: z.string().optional(),
+    confirmDuplicate: z
+      .boolean()
+      .optional()
+      .describe("Set true only after the patient confirmed they want a second appointment for the same service"),
+  }),
+  execute: async (args, ctx) => {
+    const { conv, patient } = await requireVerifiedPatient(ctx);
+    const { doctorId, startsAt } = parseSlotRef(String(args.slotRef));
+    try {
+      const appt = await bookAppointment({
+        patientId: patient.id,
+        doctorId,
+        serviceId: String(args.serviceId),
+        startsAt,
+        source: conv.channel === "WIDGET_VOICE" ? "WIDGET_VOICE" : conv.channel === "PHONE" ? "PHONE" : conv.channel === "WHATSAPP" ? "WHATSAPP" : "WIDGET_CHAT",
+        notes: args.notes ? String(args.notes) : undefined,
+        actor: actorFor(ctx),
+        allowDuplicate: Boolean(args.confirmDuplicate),
+      });
+      return {
+        booked: true,
+        appointmentId: appt.id,
+        service: appt.service.name,
+        doctor: `${appt.doctor.title} ${appt.doctor.name}`,
+        clinic: `${appt.clinic.name}, ${appt.clinic.city}`,
+        address: appt.clinic.address,
+        when: fmtClinic(appt.startsAt, appt.clinic.timezone),
+        preparation: appt.service.prepInstructions,
+      };
+    } catch (e) {
+      if (e instanceof SchedulingError) return { booked: false, error: e.code, hint: e.message };
+      throw e;
+    }
+  },
+};
+
+const rescheduleTool: ToolDef = {
+  name: "reschedule_appointment",
+  description:
+    "Move the verified patient's appointment to a new slot from find_slots. Read the new details back and get explicit confirmation BEFORE calling. Pass the version from get_my_appointments.",
+  schema: z.object({
+    appointmentId: z.string(),
+    version: z.number().describe("Current appointment version (optimistic concurrency)"),
+    slotRef: z.string().describe("Target slot copied EXACTLY from a find_slots result in this conversation. Never construct or guess it."),
+  }),
+  execute: async (args, ctx) => {
+    const { patient } = await requireVerifiedPatient(ctx);
+    const appt = await db.appointment.findUnique({ where: { id: String(args.appointmentId) } });
+    if (!appt || appt.patientId !== patient.id)
+      return { error: "NOT_FOUND", hint: "No such appointment for this patient." };
+    const { doctorId, startsAt } = parseSlotRef(String(args.slotRef));
+    try {
+      const { updated, oldSlot } = await rescheduleAppointment({
+        appointmentId: appt.id,
+        expectedVersion: Number(args.version),
+        newStartsAt: startsAt,
+        newDoctorId: doctorId,
+        actor: actorFor(ctx),
+        enforceLeadTime: true,
+      });
+      // freed old slot -> backfill offers
+      createOffersForFreedSlot(oldSlot, "system:backfill").catch((err) =>
+        console.error("backfill after reschedule failed", err)
+      );
+      return {
+        rescheduled: true,
+        appointmentId: updated.id,
+        service: updated.service.name,
+        doctor: `${updated.doctor.title} ${updated.doctor.name}`,
+        clinic: `${updated.clinic.name}, ${updated.clinic.city}`,
+        when: fmtClinic(updated.startsAt, updated.clinic.timezone),
+        version: updated.version,
+      };
+    } catch (e) {
+      if (e instanceof SchedulingError) return { rescheduled: false, error: e.code, hint: e.message };
+      throw e;
+    }
+  },
+};
+
+const cancelTool: ToolDef = {
+  name: "cancel_appointment",
+  description:
+    "Cancel the verified patient's appointment. Read the appointment details back and get an explicit yes BEFORE calling.",
+  schema: z.object({
+    appointmentId: z.string(),
+    reason: z.string().optional().describe("Short reason in English if the patient gives one"),
+  }),
+  execute: async (args, ctx) => {
+    const { patient } = await requireVerifiedPatient(ctx);
+    const appt = await db.appointment.findUnique({ where: { id: String(args.appointmentId) } });
+    if (!appt || appt.patientId !== patient.id)
+      return { error: "NOT_FOUND", hint: "No such appointment for this patient." };
+    try {
+      const { cancelled, freedSlot } = await cancelAppointment({
+        appointmentId: appt.id,
+        reason: args.reason ? String(args.reason) : undefined,
+        actor: actorFor(ctx),
+        enforceLeadTime: true,
+      });
+      if (freedSlot) {
+        createOffersForFreedSlot(freedSlot, "system:backfill").catch((err) =>
+          console.error("backfill after cancel failed", err)
+        );
+      }
+      return {
+        cancelled: true,
+        appointmentId: cancelled.id,
+        service: cancelled.service.name,
+        when: fmtClinic(cancelled.startsAt, cancelled.clinic.timezone),
+      };
+    } catch (e) {
+      if (e instanceof SchedulingError) return { cancelled: false, error: e.code, hint: e.message };
+      throw e;
+    }
+  },
+};
+
+const escalate: ToolDef = {
+  name: "escalate_to_human",
+  description:
+    "Hand the conversation to a human. MUST be used for: any symptom or clinical question, explicit request for a person, failed identity verification, or anything you cannot handle. Tell the patient a staff member will follow up shortly.",
+  schema: z.object({
+    kind: z.enum(["clinical", "human_request", "verification_failed", "unsupported", "other"]),
+    reason: z.string().describe("One-line summary for the staff"),
+  }),
+  execute: async (args, ctx) => {
+    await db.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { status: "NEEDS_HUMAN", escalationReason: `${args.kind}: ${args.reason}` },
+    });
+    await logAudit({
+      actor: actorFor(ctx),
+      action: "ESCALATED",
+      entity: "Conversation",
+      entityId: ctx.conversationId,
+      details: { kind: String(args.kind), reason: String(args.reason) },
+    });
+    return {
+      escalated: true,
+      note: "A staff member has been notified and will follow up. Do not attempt clinical advice.",
+    };
+  },
+};
+
+export const AGENT_TOOLS: ToolDef[] = [
+  listClinics,
+  listServices,
+  listDoctors,
+  verifyPatient,
+  registerPatient,
+  getMyAppointments,
+  findSlots,
+  bookTool,
+  rescheduleTool,
+  cancelTool,
+  escalate,
+];
+
+export const toolByName = new Map(AGENT_TOOLS.map((t) => [t.name, t]));
+
+export async function executeTool(name: string, args: Record<string, unknown>, ctx: ToolContext) {
+  const tool = toolByName.get(name);
+  if (!tool) return { error: "UNKNOWN_TOOL", hint: `No tool named ${name}` };
+  const parsed = tool.schema.safeParse(args);
+  if (!parsed.success)
+    return { error: "BAD_ARGS", hint: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
+  try {
+    return await tool.execute(parsed.data, ctx);
+  } catch (e) {
+    if (e instanceof SchedulingError) return { error: e.code, hint: e.message };
+    console.error(`tool ${name} failed`, e);
+    return { error: "TOOL_FAILED", hint: "Unexpected error, apologize and offer to escalate to a human." };
+  }
+}
