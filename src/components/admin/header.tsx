@@ -27,7 +27,7 @@ export function AdminHeader({ userName, role }: { userName: string; role: string
   return (
     <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b bg-background px-6">
       <div className="text-sm text-muted-foreground">
-        Fresenius Medical Care — European clinic network
+        AI voice call center — European clinic network
       </div>
       <div className="flex items-center gap-3">
         <Button variant="outline" size="sm" asChild>
