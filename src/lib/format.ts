@@ -16,10 +16,6 @@ export function fmtTime(date: Date | string, timezone: string) {
   return formatInTimeZone(new Date(date), timezone, "HH:mm");
 }
 
-export function fmtDate(date: Date | string, timezone: string) {
-  return formatInTimeZone(new Date(date), timezone, "EEE, d MMM yyyy");
-}
-
 export function minutesToHHMM(min: number) {
   const h = Math.floor(min / 60)
     .toString()

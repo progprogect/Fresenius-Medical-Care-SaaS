@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { db } from "@/lib/db";
 import { runAgentTurn } from "@/lib/agent/brain";
 import { getSettings } from "@/lib/settings";
+import {
+  createWidgetConversation,
+  expireStaleVerification,
+  isReusable,
+  resolveOwnedConversation,
+} from "@/lib/conversation-session";
 
 const Body = z.object({
   conversationId: z.string().nullish(),
+  clientToken: z.string().nullish(),
   message: z.string().min(1).max(4000),
 });
 
@@ -13,24 +19,27 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Bad request" }, { status: 400 });
 
-  let conversationId = parsed.data.conversationId ?? undefined;
-  if (conversationId) {
-    const exists = await db.conversation.findUnique({ where: { id: conversationId } });
-    if (!exists) conversationId = undefined;
-  }
-  if (!conversationId) {
-    const conv = await db.conversation.create({ data: { channel: "WIDGET_CHAT" } });
-    conversationId = conv.id;
-  }
+  // A caller may only continue a conversation it holds the token for; anything
+  // else starts fresh rather than resuming a stranger's verified session.
+  const owned = await resolveOwnedConversation(parsed.data.conversationId, parsed.data.clientToken);
+  const conversation =
+    owned && isReusable(owned)
+      ? await expireStaleVerification(owned)
+      : await createWidgetConversation("WIDGET_CHAT");
 
   try {
-    const result = await runAgentTurn(conversationId, parsed.data.message);
-    return NextResponse.json({ conversationId, ...result });
+    const result = await runAgentTurn(conversation.id, parsed.data.message);
+    return NextResponse.json({
+      conversationId: conversation.id,
+      clientToken: conversation.clientToken,
+      ...result,
+    });
   } catch (err) {
     console.error("agent chat failed", err);
     return NextResponse.json(
       {
-        conversationId,
+        conversationId: conversation.id,
+        clientToken: conversation.clientToken,
         reply:
           "I'm having technical trouble right now. Please try again in a moment or call the clinic directly.",
         toolEvents: [],

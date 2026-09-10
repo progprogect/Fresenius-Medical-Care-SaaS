@@ -11,6 +11,7 @@ import {
 import { createOffersForFreedSlot } from "@/lib/backfill";
 import { fmtClinic } from "@/lib/format";
 import { fullNameSimilarity, isRealName, parseDateOfBirth, parsePhone } from "@/lib/patient-input";
+import { MAX_FAILED_VERIFICATIONS } from "@/lib/conversation-session";
 import { continueInLanguage, isSupportedLanguage, languageLabel, SUPPORTED_LANGUAGES } from "@/lib/languages";
 import { formatInTimeZone } from "date-fns-tz";
 
@@ -182,6 +183,14 @@ const verifyPatient: ToolDef = {
       .describe("Only true after the patient confirmed a name you read back to them"),
   }),
   execute: async (args, ctx) => {
+    const conversation = await db.conversation.findUnique({ where: { id: ctx.conversationId } });
+    if (conversation && conversation.failedVerifications >= MAX_FAILED_VERIFICATIONS)
+      return {
+        verified: false,
+        error: "TOO_MANY_ATTEMPTS",
+        hint: "Too many failed attempts on this conversation. Stop asking for identifiers and hand over to a human with escalate_to_human.",
+      };
+
     const rawPhone = args.phone ? String(args.phone).trim() : "";
     const firstName = args.firstName ? String(args.firstName).trim() : "";
     const lastName = args.lastName ? String(args.lastName).trim() : "";
@@ -189,17 +198,17 @@ const verifyPatient: ToolDef = {
     const dob = parseDateOfBirth(String(args.dateOfBirth));
     const hasName = Boolean(firstName && lastName);
 
-    if (!phone?.suffix && !hasName)
-      return {
-        verified: false,
-        error: "NEED_AN_IDENTIFIER",
-        hint: "Ask for either the phone number, or the first and last name — whichever the patient finds easier — along with the date of birth.",
-      };
     if (rawPhone && !phone?.suffix && !hasName)
       return {
         verified: false,
         error: "PHONE_UNCLEAR",
         hint: "The phone number did not come through. Read back the digits you think you heard and ask the patient to confirm with a simple yes, rather than making them repeat the whole number.",
+      };
+    if (!phone?.suffix && !hasName)
+      return {
+        verified: false,
+        error: "NEED_AN_IDENTIFIER",
+        hint: "Ask for either the phone number, or the first and last name — whichever the patient finds easier — along with the date of birth.",
       };
     if (dob.candidates.length === 0)
       return {
@@ -258,18 +267,15 @@ const verifyPatient: ToolDef = {
 
       const best = scored[0];
       if (best && best.score < 1 && !args.confirmed) {
-        // Close but not exact: let the patient confirm the spelling rather
-        // than risk opening someone else's record.
+        // Close but not exact: confirm the spelling rather than risk opening
+        // someone else's record. Only the NAME is read back — the date of
+        // birth is what found this record, so asking about it again would
+        // sound like the patient was not listened to.
         return {
           verified: false,
           needsConfirmation: true,
-          readBack: {
-            name: `${best.patient.firstName} ${best.patient.lastName}`,
-            dateOfBirth: spellDate(
-              formatInTimeZone(best.patient.dateOfBirth!, "UTC", "yyyy-MM-dd")
-            ),
-          },
-          hint: `Ask exactly this and nothing more: "Habe ich das richtig - ${best.patient.firstName} ${best.patient.lastName}, geboren am ..." in the conversation's language, using the values in readBack. If the patient says yes, call verify_patient again with the same details and confirmed: true. If they say no, ask them to spell the surname.`,
+          readBack: { name: `${best.patient.firstName} ${best.patient.lastName}` },
+          hint: `The name came through slightly differently. Confirm only the name, in the conversation's language and in one short question, along the lines of "Just to check the spelling — is it <name>?" using readBack.name. Do NOT ask for the date of birth again; it already matched. If the patient says yes, call verify_patient again with the same details plus confirmed: true. If they say no, ask them to spell the surname.`,
         };
       }
       matches = best ? [best.patient] : [];
@@ -284,6 +290,10 @@ const verifyPatient: ToolDef = {
         entity: "Conversation",
         entityId: ctx.conversationId,
         details: { by: identifiedBy, ambiguous: matches.length > 1 },
+      });
+      await db.conversation.update({
+        where: { id: ctx.conversationId },
+        data: { failedVerifications: { increment: 1 } },
       });
       return {
         verified: false,
@@ -300,7 +310,12 @@ const verifyPatient: ToolDef = {
     }
     await db.conversation.update({
       where: { id: ctx.conversationId },
-      data: { verified: true, patientId: patient.id },
+      data: {
+        verified: true,
+        verifiedAt: new Date(),
+        patientId: patient.id,
+        failedVerifications: 0,
+      },
     });
     await logAudit({
       actor: actorFor(ctx),
@@ -381,7 +396,7 @@ const registerPatient: ToolDef = {
     });
     await db.conversation.update({
       where: { id: ctx.conversationId },
-      data: { verified: true, patientId: patient.id },
+      data: { verified: true, verifiedAt: new Date(), patientId: patient.id },
     });
     await logAudit({
       actor: actorFor(ctx),

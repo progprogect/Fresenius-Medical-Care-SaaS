@@ -181,6 +181,11 @@ model Conversation {
   patientId         String?
   patient           Patient?            @relation(fields: [patientId], references: [id])
   verified          Boolean             @default(false) // UC-1 verified session
+  verifiedAt        DateTime? // verification goes stale, so a shared browser cannot inherit it
+  failedVerifications Int               @default(0) // caps guessing at the second factor
+  /// Capability token held by the browser that started this conversation.
+  /// Knowing the id alone must not be enough to resume a verified session.
+  clientToken       String?             @unique
   externalId        String? // ElevenLabs conversation id
   escalationReason  String?
   summary           String?

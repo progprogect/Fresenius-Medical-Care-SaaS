@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { AGENT_TOOLS } from "@/lib/agent/tools";
 import { buildCalendarBlock, buildSystemPrompt, CALENDAR_VARIABLE } from "@/lib/agent/prompt";
-import { db } from "@/lib/db";
+import {
+  createWidgetConversation,
+  isReusable,
+  resolveOwnedConversation,
+} from "@/lib/conversation-session";
 import { getSettings, saveSettings } from "@/lib/settings";
 import { languageLabel } from "@/lib/languages";
 import { createHash } from "node:crypto";
@@ -138,11 +142,6 @@ function webhookTools(baseUrl: string, secret: string) {
   });
 }
 
-/**
- * English-only TTS models. ElevenLabs rejects any multilingual model while the
- * agent's primary language is "en", which is why an English-first agent can
- * never speak good German.
- */
 /** Dynamic variable carrying our own conversation id into a voice session. */
 export const CONVERSATION_VARIABLE = "app_conversation_id";
 
@@ -169,6 +168,12 @@ const BUILT_IN_TOOLS = {
   },
 };
 
+/**
+ * ElevenLabs rejects a multilingual TTS model while the agent's primary
+ * language is "en", so an English-first agent is stuck with the English-only
+ * model and speaks every other language badly. A non-English primary language
+ * unlocks the multilingual one.
+ */
 const ENGLISH_ONLY_TTS = "eleven_turbo_v2";
 const MULTILINGUAL_TTS = "eleven_turbo_v2_5";
 
@@ -326,17 +331,17 @@ export async function syncElevenLabsAgent() {
  * Signed URL plus the per-call variables the agent's prompt expects, so the
  * browser widget can open a private-agent voice session that knows today's date.
  */
-export async function getSignedUrl(existingConversationId?: string) {
+export async function getSignedUrl(existingConversationId?: string, clientToken?: string) {
   const agent = await getSettings("agent");
   if (!agent.elevenLabsAgentId) throw new Error("Voice agent is not provisioned yet");
 
-  // One conversation per visitor, whether they type or talk: the widget hands
-  // back the id it already has, so the transcript stays a single thread.
-  const existing = existingConversationId
-    ? await db.conversation.findUnique({ where: { id: existingConversationId } })
-    : null;
+  // One conversation per visitor, whether they type or talk, so the transcript
+  // stays a single thread — but only if the caller holds its token. An id
+  // alone must not open a voice session on someone else's verified
+  // conversation.
+  const owned = await resolveOwnedConversation(existingConversationId, clientToken);
   const conversation =
-    existing ?? (await db.conversation.create({ data: { channel: "WIDGET_VOICE" } }));
+    owned && isReusable(owned) ? owned : await createWidgetConversation("WIDGET_VOICE");
 
   const data = (await el(
     `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agent.elevenLabsAgentId)}`
@@ -345,6 +350,7 @@ export async function getSignedUrl(existingConversationId?: string) {
   return {
     signedUrl: data.signed_url,
     conversationId: conversation.id,
+    clientToken: conversation.clientToken,
     dynamicVariables: {
       [CALENDAR_VARIABLE]: await buildCalendarBlock(),
       [CONVERSATION_VARIABLE]: conversation.id,

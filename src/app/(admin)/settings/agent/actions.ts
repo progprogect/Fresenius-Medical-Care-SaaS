@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireSession } from "@/lib/auth";
 import { saveSettings } from "@/lib/settings";
+import { SUPPORTED_LANGUAGES } from "@/lib/languages";
 
 const AgentInput = z.object({
   displayName: z.string().min(1),
@@ -16,7 +17,7 @@ const AgentInput = z.object({
   voiceId: z.string(),
 });
 
-const SUPPORTED = new Set(["de", "en", "fr", "es", "it", "pl", "nl", "pt"]);
+const SUPPORTED = new Set<string>(SUPPORTED_LANGUAGES.map((l) => l.code));
 
 export async function saveAgentSettingsAction(input: z.infer<typeof AgentInput>) {
   await requireSession();

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import { fmtClinic } from "@/lib/format";
 import { addDays } from "date-fns";
 import type { AppointmentSource, Prisma } from "@prisma/client";
 
@@ -88,7 +89,7 @@ export async function findAvailableSlots(params: {
   const appointments = await db.appointment.findMany({
     where: {
       doctorId: { in: doctors.map((d) => d.id) },
-      status: { notIn: ["CANCELLED"] },
+      status: { notIn: ["CANCELLED", "NO_SHOW"] },
       startsAt: { lt: windowEnd },
       endsAt: { gt: windowStart },
       ...(params.excludeAppointmentId ? { id: { not: params.excludeAppointmentId } } : {}),
@@ -143,7 +144,17 @@ export async function findAvailableSlots(params: {
   return slots.slice(0, limit);
 }
 
-/** Throws if the doctor is not free in [startsAt, endsAt). */
+/**
+ * Throws if the doctor is not free in [startsAt, endsAt).
+ *
+ * The doctor row is locked first. Postgres runs on READ COMMITTED, so without
+ * the lock two simultaneous bookings both read an empty slot and both insert
+ * it — the read tells you nothing about what the other transaction is about to
+ * write. Locking the doctor serialises bookings per doctor, which is exactly
+ * the granularity that matters and leaves the rest of the diary concurrent.
+ * A partial unique index would be the alternative, but Prisma cannot express
+ * one, and a plain unique constraint would stop a cancelled slot being reused.
+ */
 async function assertSlotFree(
   tx: Prisma.TransactionClient,
   doctorId: string,
@@ -151,10 +162,12 @@ async function assertSlotFree(
   endsAt: Date,
   excludeAppointmentId?: string
 ) {
+  await tx.$queryRaw`SELECT id FROM "Doctor" WHERE id = ${doctorId} FOR UPDATE`;
+
   const clash = await tx.appointment.findFirst({
     where: {
       doctorId,
-      status: { notIn: ["CANCELLED"] },
+      status: { notIn: ["CANCELLED", "NO_SHOW"] },
       startsAt: { lt: endsAt },
       endsAt: { gt: startsAt },
       ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
@@ -210,7 +223,7 @@ export async function bookAppointment(params: {
     if (dup)
       throw new SchedulingError(
         "DUPLICATE_APPOINTMENT",
-        `The patient already has an upcoming appointment for this service on ${dup.startsAt.toISOString()} (id ${dup.id}). Ask the patient to confirm they want another one, then retry with allowDuplicate.`
+        `This patient already has an upcoming ${service.name} on ${fmtClinic(dup.startsAt, dup.clinic.timezone)}. Confirm they want a second one before booking it.`
       );
   }
 
@@ -260,8 +273,11 @@ export async function rescheduleAppointment(params: {
     include: { service: true, doctor: true },
   });
   if (!current) throw new SchedulingError("NOT_FOUND", "Appointment not found");
-  if (current.status === "CANCELLED" || current.status === "COMPLETED")
-    throw new SchedulingError("NOT_MODIFIABLE", `Appointment is ${current.status.toLowerCase()}`);
+  if (["CANCELLED", "COMPLETED", "NO_SHOW"].includes(current.status))
+    throw new SchedulingError(
+      "NOT_MODIFIABLE",
+      `Appointment is ${current.status.toLowerCase().replace("_", " ")}`
+    );
   if (params.expectedVersion !== undefined && current.version !== params.expectedVersion)
     throw new SchedulingError(
       "VERSION_CONFLICT",
@@ -302,6 +318,7 @@ export async function rescheduleAppointment(params: {
         endsAt,
         doctorId,
         clinicId: newDoctor.clinicId,
+        // A moved visit needs confirming again, so it drops back to BOOKED.
         status: "BOOKED",
         version: { increment: 1 },
         ...(params.source ? { source: params.source } : {}),
@@ -343,8 +360,11 @@ export async function cancelAppointment(params: {
   });
   if (!current) throw new SchedulingError("NOT_FOUND", "Appointment not found");
   if (current.status === "CANCELLED") return { cancelled: current, freedSlot: null };
-  if (current.status === "COMPLETED")
-    throw new SchedulingError("NOT_MODIFIABLE", "Appointment is already completed");
+  if (current.status === "COMPLETED" || current.status === "NO_SHOW")
+    throw new SchedulingError(
+      "NOT_MODIFIABLE",
+      `Appointment is already ${current.status.toLowerCase().replace("_", " ")}`
+    );
   if (params.enforceLeadTime) {
     const deadline = new Date(current.startsAt.getTime() - CANCEL_LEAD_MINUTES * 60_000);
     if (new Date() > deadline)

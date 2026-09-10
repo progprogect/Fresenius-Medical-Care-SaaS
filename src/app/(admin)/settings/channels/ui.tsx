@@ -11,18 +11,19 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import type { BackfillSettings, TwilioSettings, WidgetSettings } from "@/lib/settings";
 import { saveBackfillAction, saveTwilioAction, saveWidgetAction } from "./actions";
 
 export function ChannelsForm({
   twilio: twilioInitial,
+  authTokenSet,
   backfill: backfillInitial,
   widget: widgetInitial,
   baseUrl,
 }: {
   twilio: TwilioSettings;
+  authTokenSet: boolean;
   backfill: BackfillSettings;
   widget: WidgetSettings;
   baseUrl: string;
@@ -71,7 +72,15 @@ export function ChannelsForm({
             </div>
             <div className="space-y-2">
               <Label>Auth token</Label>
-              <Input type="password" value={twilio.authToken} onChange={(e) => setTwilio({ ...twilio, authToken: e.target.value })} />
+              <Input
+                type="password"
+                placeholder={authTokenSet ? "Stored — leave blank to keep it" : "Not set"}
+                value={twilio.authToken}
+                onChange={(e) => setTwilio({ ...twilio, authToken: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                The stored token is never sent back to the browser. Type a new one to replace it.
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Phone number (SMS)</Label>
@@ -167,10 +176,6 @@ export function ChannelsForm({
                 </SelectContent>
               </Select>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Launcher greeting</Label>
-            <Textarea rows={2} value={widget.greeting} onChange={(e) => setWidget({ ...widget, greeting: e.target.value })} />
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">

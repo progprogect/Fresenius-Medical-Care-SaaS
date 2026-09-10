@@ -5,8 +5,8 @@
  */
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
-import { fromZonedTime } from "date-fns-tz";
-import { addDays, format } from "date-fns";
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { addDays } from "date-fns";
 
 const db = new PrismaClient();
 
@@ -170,8 +170,11 @@ export async function seed() {
     const doctorServiceNames = doctor.seed.services;
     for (let dayOffset = -3; dayOffset <= 13; dayOffset++) {
       const day = addDays(today, dayOffset);
-      const dateStr = format(day, "yyyy-MM-dd");
-      const weekday = day.getDay();
+      // Both must be read in the clinic's timezone: deriving them from the
+      // seeding machine's local date can land a visit on the wrong local
+      // weekday, outside the doctor's working hours.
+      const dateStr = formatInTimeZone(day, tz, "yyyy-MM-dd");
+      const weekday = Number(formatInTimeZone(day, tz, "i")) % 7;
       const ranges = doctor.seed.hours.filter(([w]) => w === weekday);
       for (const [, startMin, endMin] of ranges) {
         let cursor = startMin;
@@ -214,7 +217,7 @@ export async function seed() {
   // Scripted demo: Emma Weber has a consultation with Dr. Voss in ~6 days at 11:00 Berlin
   const voss = doctors.find((d) => d.name === "Katharina Voss")!;
   const consult = services.get("Nephrology Consultation")!;
-  const inSixDays = format(addDays(today, 6), "yyyy-MM-dd");
+  const inSixDays = formatInTimeZone(addDays(today, 6), "Europe/Berlin", "yyyy-MM-dd");
   const emmaStart = fromZonedTime(`${inSixDays}T11:00:00`, "Europe/Berlin");
   await db.appointment.deleteMany({
     where: { doctorId: voss.id, startsAt: { lt: new Date(emmaStart.getTime() + consult.durationMin * 60000) }, endsAt: { gt: emmaStart } },
@@ -230,7 +233,7 @@ export async function seed() {
   });
 
   // A freed slot tomorrow morning (recent cancellation) for the backfill demo
-  const tomorrow = format(addDays(today, 1), "yyyy-MM-dd");
+  const tomorrow = formatInTimeZone(addDays(today, 1), "Europe/Berlin", "yyyy-MM-dd");
   const freedStart = fromZonedTime(`${tomorrow}T09:00:00`, "Europe/Berlin");
   await db.appointment.deleteMany({
     where: { doctorId: voss.id, startsAt: { lt: new Date(freedStart.getTime() + consult.durationMin * 60000) }, endsAt: { gt: freedStart } },

@@ -41,6 +41,14 @@ See README.md and docs/ARCHITECTURE.md first.
   pinned above the conversation log and is never hidden by the filters.
 - `getSession` checks the user still exists in the database, so a removed account loses access
   immediately and a stale session cannot be written as a foreign key.
+- Public conversation endpoints (widget chat, voice signed-url, voice transcript) require the
+  conversation's `clientToken` as well as its id — an id alone must never resume a verified
+  session. Verification lapses after 30 minutes of silence and after 5 failed attempts.
+  `/api/twilio/inbound` verifies the Twilio request signature before trusting the sender's number.
+- Channel settings are ADMIN-only and the Twilio auth token is never sent to the browser; a blank
+  field means "keep the stored one".
+- Booking locks the doctor row (`SELECT … FOR UPDATE`) before checking the slot, because
+  READ COMMITTED lets two concurrent bookings both see it free.
 - Languages: ElevenLabs refuses a multilingual TTS model while the agent's primary language is
   `en`, so the primary must be a non-English market language (German) with English configured as
   an additional one. `syncElevenLabsAgent` picks `eleven_turbo_v2_5`, builds `language_presets`

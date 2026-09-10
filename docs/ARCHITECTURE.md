@@ -43,12 +43,14 @@ single module.
 
 | Tool | Use case |
 |---|---|
-| `verify_patient` (phone + DOB) / `register_patient` | UC-1 Identity Verification — required before any protected read/write; result stored on the conversation as a verified session |
+| `verify_patient` (date of birth plus either the phone number or the name, matched fuzzily) / `register_patient` | UC-1 Identity Verification — required before any protected read/write; result stored on the conversation as a verified session, which expires after 30 minutes of silence |
 | `get_my_appointments` | UC-2 View Existing Appointment |
 | `find_slots` → `reschedule_appointment` (with `version`) | UC-3 Reschedule — optimistic concurrency, lead-time policy, alternative-provider support |
 | `cancel_appointment` | UC-4 Cancel — confirmation-first, cancellation deadline, triggers backfill |
 | `list_clinics` / `list_services` / `list_doctors` + `find_slots` → `book_appointment` | UC-5 New Booking — duplicate detection, slot race re-check |
-| `escalate_to_human` | Human/Clinical Escalation — symptoms, explicit human request, failed verification; conversation flagged `NEEDS_HUMAN` for staff |
+| `escalate_to_human` | Human/Clinical Escalation — symptoms, explicit human request, failed verification; conversation flagged `NEEDS_HUMAN` for staff, who claim it from the pinned queue |
+| `set_language` | Pins the conversation to the language the patient actually uses |
+| `close_conversation` | Marks the conversation resolved with a summary once the patient is done; refuses while an escalation is open |
 
 Slot references travel as opaque `slotRef` values (`doctorId@ISO`) so the LLM never constructs
 date math. Tool results are replayed into the model context on every turn.

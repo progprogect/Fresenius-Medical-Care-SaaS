@@ -50,18 +50,34 @@ function ChatWidgetInner() {
       return null;
     }
   });
+  // The id names a thread; this token proves we are the browser that started
+  // it. Without it the server hands us a fresh conversation instead.
+  const [clientToken, setClientToken] = React.useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    try {
+      return localStorage.getItem("clinic-widget-token");
+    } catch {
+      return null;
+    }
+  });
   const [voiceOpen, setVoiceOpen] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const voiceExternalId = React.useRef<string | null>(null);
   // Mirrors the state so the voice callbacks, which outlive a render, always
   // post transcripts into the conversation that is actually current.
   const conversationIdRef = React.useRef<string | null>(conversationId);
+  const clientTokenRef = React.useRef<string | null>(clientToken);
 
-  const rememberConversation = React.useCallback((id: string) => {
+  const rememberConversation = React.useCallback((id: string, token?: string | null) => {
     conversationIdRef.current = id;
     setConversationId(id);
+    if (token) {
+      clientTokenRef.current = token;
+      setClientToken(token);
+    }
     try {
       localStorage.setItem("clinic-widget-conversation", id);
+      if (token) localStorage.setItem("clinic-widget-token", token);
     } catch {}
   }, []);
 
@@ -86,7 +102,7 @@ function ChatWidgetInner() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             conversationId: convId,
-            externalId: voiceExternalId.current ?? undefined,
+            clientToken: clientTokenRef.current,
             role: msg.source === "user" ? "user" : "ai",
             text: msg.message,
           }),
@@ -143,12 +159,13 @@ function ChatWidgetInner() {
       const res = await fetch("/api/agent/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...(conversationId ? { conversationId } : {}), message: trimmed }),
+        body: JSON.stringify({
+          ...(conversationId && clientToken ? { conversationId, clientToken } : {}),
+          message: trimmed,
+        }),
       });
       const data = await res.json();
-      if (data.conversationId && data.conversationId !== conversationId) {
-        rememberConversation(data.conversationId);
-      }
+      if (data.conversationId) rememberConversation(data.conversationId, data.clientToken);
       setMessages((prev) => [
         ...prev.map((m) => (m.seeded ? { ...m, seeded: false } : m)),
         { id: nextId(), role: "assistant", text: data.reply },
@@ -170,12 +187,14 @@ function ChatWidgetInner() {
   async function startVoice() {
     if (!config?.voiceReady) return;
     try {
-      const res = await fetch(
-        `/api/voice/signed-url${conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : ""}`
-      );
+      const query =
+        conversationId && clientToken
+          ? `?conversationId=${encodeURIComponent(conversationId)}&clientToken=${encodeURIComponent(clientToken)}`
+          : "";
+      const res = await fetch(`/api/voice/signed-url${query}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      if (data.conversationId) rememberConversation(data.conversationId);
+      if (data.conversationId) rememberConversation(data.conversationId, data.clientToken);
       // Open the call in the visitor's own language when we support it, so the
       // greeting already matches; the agent still switches if they speak another.
       const browserLanguage = normalizeLanguageTag(navigator.language);

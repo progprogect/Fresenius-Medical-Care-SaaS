@@ -38,7 +38,6 @@ export type BackfillSettings = {
 };
 
 export type WidgetSettings = {
-  greeting: string;
   primaryColor: string;
   position: "bottom-right" | "bottom-left";
   allowVoice: boolean;
@@ -84,7 +83,6 @@ const DEFAULTS: {
     channels: ["whatsapp"],
   } satisfies BackfillSettings,
   widget: {
-    greeting: "Need an appointment? Chat with our assistant.",
     primaryColor: "#0d9488",
     position: "bottom-right",
     allowVoice: true,

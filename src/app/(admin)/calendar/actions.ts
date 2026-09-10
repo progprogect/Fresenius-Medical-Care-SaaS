@@ -132,6 +132,7 @@ export async function saveAppointmentNotesAction(input: {
       where: { id: input.appointmentId },
       data: { notes: input.notes },
     });
+    revalidatePath("/calendar");
     return { ok: true };
   } catch (err) {
     return fail(err);

@@ -31,7 +31,7 @@ const STEPS = [
 
 export default async function BackfillPage() {
   await expireOverdueOffers();
-  const [offers, cfg] = await Promise.all([
+  const [offers, cfg, twilio] = await Promise.all([
     db.slotOffer.findMany({
       include: {
         appointment: { include: { patient: true, clinic: true, service: true, doctor: true } },
@@ -40,6 +40,7 @@ export default async function BackfillPage() {
       take: 60,
     }),
     getSettings("backfill"),
+    getSettings("twilio"),
   ]);
 
   const open = offers.filter((o) => o.status === "PENDING" || o.status === "SENT");
@@ -97,8 +98,10 @@ export default async function BackfillPage() {
               {open.length > 0 && <Badge variant="secondary">{open.length}</Badge>}
             </CardTitle>
             <CardDescription>
-              Sent and waiting for the patient to answer. Twilio is in demo mode, so the WhatsApp
-              message is simulated — use the buttons to answer as the patient would.
+              Sent and waiting for the patient to answer.{" "}
+              {twilio.mode === "live"
+                ? "Twilio is live, so these went out as real WhatsApp messages."
+                : "Twilio is in demo mode, so the WhatsApp message is simulated — use the buttons to answer as the patient would."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">

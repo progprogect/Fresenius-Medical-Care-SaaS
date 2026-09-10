@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { SUPPORTED_LANGUAGES } from "@/lib/languages";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -88,11 +89,7 @@ export default async function PatientsPage({
     },
     {
       kind: "select", key: "language", label: "Language", allLabel: "Any language",
-      options: [
-        { value: "en", label: "English" }, { value: "de", label: "German" },
-        { value: "fr", label: "French" }, { value: "es", label: "Spanish" },
-        { value: "it", label: "Italian" }, { value: "pl", label: "Polish" },
-      ],
+      options: SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label })),
     },
     {
       kind: "select", key: "optIn", label: "Slot offers", allLabel: "Any offer opt-in",

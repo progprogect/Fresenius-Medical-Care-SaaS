@@ -34,6 +34,7 @@ export function NewAppointmentDialog({
   const [doctorId, setDoctorId] = React.useState("any");
   const [slot, setSlot] = React.useState<ApiSlot | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [duplicateWarning, setDuplicateWarning] = React.useState<string | null>(null);
 
   const [prevOpen, setPrevOpen] = React.useState(open);
   if (open !== prevOpen) {
@@ -53,6 +54,7 @@ export function NewAppointmentDialog({
   if (slotContext !== prevSlotContext) {
     setPrevSlotContext(slotContext);
     setSlot(null);
+    setDuplicateWarning(null);
   }
 
   const matches = patientQuery.trim()
@@ -65,7 +67,7 @@ export function NewAppointmentDialog({
     (d) => d.clinicId === clinicId && (!serviceId || d.serviceIds.includes(serviceId))
   );
 
-  async function create() {
+  async function create(allowDuplicate = false) {
     if (!patientId || !serviceId || !slot) return;
     setBusy(true);
     const res = await createAppointmentAction({
@@ -73,12 +75,19 @@ export function NewAppointmentDialog({
       doctorId: slot.doctorId,
       serviceId,
       startsAtIso: slot.startsAt,
+      allowDuplicate,
     });
     setBusy(false);
     if (!res.ok) {
+      // A duplicate is a warning, not a wall: offer to go ahead anyway.
+      if (/already has an upcoming/i.test(res.error)) {
+        setDuplicateWarning(res.error);
+        return;
+      }
       toast.error(res.error);
       return;
     }
+    setDuplicateWarning(null);
     toast.success("Appointment created");
     onCreated();
   }
@@ -193,12 +202,20 @@ export function NewAppointmentDialog({
             </div>
           )}
         </div>
+        {duplicateWarning && (
+          <p className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+            {duplicateWarning}
+          </p>
+        )}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={!patientId || !serviceId || !slot || busy} onClick={create}>
-            {busy ? "Booking..." : "Book appointment"}
+          <Button
+            disabled={!patientId || !serviceId || !slot || busy}
+            onClick={() => create(Boolean(duplicateWarning))}
+          >
+            {busy ? "Booking..." : duplicateWarning ? "Book anyway" : "Book appointment"}
           </Button>
         </DialogFooter>
       </DialogContent>

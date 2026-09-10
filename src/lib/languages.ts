@@ -1,13 +1,13 @@
 /** Languages the assistant can hold a conversation in. */
 export const SUPPORTED_LANGUAGES = [
-  { code: "de", label: "German", native: "Deutsch" },
-  { code: "en", label: "English", native: "English" },
-  { code: "fr", label: "French", native: "Français" },
-  { code: "es", label: "Spanish", native: "Español" },
-  { code: "it", label: "Italian", native: "Italiano" },
-  { code: "pl", label: "Polish", native: "Polski" },
-  { code: "nl", label: "Dutch", native: "Nederlands" },
-  { code: "pt", label: "Portuguese", native: "Português" },
+  { code: "de", label: "German" },
+  { code: "en", label: "English" },
+  { code: "fr", label: "French" },
+  { code: "es", label: "Spanish" },
+  { code: "it", label: "Italian" },
+  { code: "pl", label: "Polish" },
+  { code: "nl", label: "Dutch" },
+  { code: "pt", label: "Portuguese" },
 ] as const;
 
 export type LanguageCode = (typeof SUPPORTED_LANGUAGES)[number]["code"];
@@ -16,10 +16,6 @@ const BY_CODE = new Map(SUPPORTED_LANGUAGES.map((l) => [l.code, l]));
 
 export function languageLabel(code: string) {
   return BY_CODE.get(code as LanguageCode)?.label ?? code.toUpperCase();
-}
-
-export function languageNative(code: string) {
-  return BY_CODE.get(code as LanguageCode)?.native ?? code.toUpperCase();
 }
 
 export function isSupportedLanguage(code: string): code is LanguageCode {

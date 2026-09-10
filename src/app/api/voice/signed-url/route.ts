@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { getSignedUrl } from "@/lib/elevenlabs";
 
 export async function GET(req: Request) {
-  const existing = new URL(req.url).searchParams.get("conversationId") ?? undefined;
+  const params = new URL(req.url).searchParams;
   try {
-    const { signedUrl, dynamicVariables, languages, conversationId } = await getSignedUrl(existing);
-    return NextResponse.json({ signedUrl, dynamicVariables, languages, conversationId });
+    const result = await getSignedUrl(
+      params.get("conversationId") ?? undefined,
+      params.get("clientToken") ?? undefined
+    );
+    return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "failed";
     return NextResponse.json({ error: message }, { status: 503 });

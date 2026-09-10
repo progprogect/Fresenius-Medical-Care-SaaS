@@ -3,15 +3,11 @@ import { PageHeader } from "@/components/admin/page-header";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
 import { resultLabel } from "@/components/admin/result-count";
 import { Card, CardContent } from "@/components/ui/card";
+import { languageLabel } from "@/lib/languages";
 import { DoctorsTable } from "./ui";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
-
-const LANGUAGE_LABELS: Record<string, string> = {
-  en: "English", de: "German", fr: "French", es: "Spanish",
-  it: "Italian", pl: "Polish", sv: "Swedish",
-};
 
 export default async function DoctorsPage({
   searchParams,
@@ -70,7 +66,7 @@ export default async function DoctorsPage({
     },
     {
       kind: "select", key: "language", label: "Language", allLabel: "Any language",
-      options: languages.map((l) => ({ value: l, label: LANGUAGE_LABELS[l] ?? l.toUpperCase() })),
+      options: languages.map((l) => ({ value: l, label: languageLabel(l) })),
     },
     {
       kind: "select", key: "schedule", label: "Schedule", allLabel: "Any schedule",

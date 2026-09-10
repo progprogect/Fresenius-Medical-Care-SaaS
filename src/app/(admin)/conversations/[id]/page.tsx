@@ -132,6 +132,12 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
                 <span className="text-muted-foreground">Handled by: </span>
                 {conv.assignedTo ? (mine ? "you" : conv.assignedTo.name) : "nobody yet"}
               </div>
+              {conv.summary && (
+                <div className="rounded-md bg-muted p-2 text-xs">
+                  <span className="text-muted-foreground">Outcome: </span>
+                  {conv.summary}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
