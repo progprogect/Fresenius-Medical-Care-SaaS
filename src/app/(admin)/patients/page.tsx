@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { resultLabel } from "@/components/admin/result-count";
+import { Pagination } from "@/components/admin/pagination";
+import { parsePage } from "@/lib/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -14,7 +15,7 @@ import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-const LIMIT = 200;
+const PAGE_SIZE = 50;
 
 export default async function PatientsPage({
   searchParams,
@@ -58,6 +59,8 @@ export default async function PatientsPage({
   const orderBy: Prisma.PatientOrderByWithRelationInput =
     p.sort === "newest" ? { createdAt: "desc" } : { lastName: "asc" };
 
+  const total = await db.patient.count({ where });
+  const page = parsePage(p.page, total, PAGE_SIZE);
   const patients = await db.patient.findMany({
     where,
     include: {
@@ -70,7 +73,8 @@ export default async function PatientsPage({
       _count: { select: { appointments: true, conversations: true } },
     },
     orderBy,
-    take: LIMIT,
+    skip: (page - 1) * PAGE_SIZE,
+    take: PAGE_SIZE,
   });
 
   const filters: FilterDef[] = [
@@ -110,7 +114,7 @@ export default async function PatientsPage({
         title="Patients"
         description="Patient registry the AI uses for identity verification"
       />
-      <FilterBar filters={filters} resultLabel={resultLabel(patients.length, LIMIT)} />
+      <FilterBar filters={filters} resultLabel={`${total} ${total === 1 ? "result" : "results"}`} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>
@@ -162,6 +166,7 @@ export default async function PatientsPage({
           </Table>
         </CardContent>
       </Card>
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} />
     </div>
   );
 }

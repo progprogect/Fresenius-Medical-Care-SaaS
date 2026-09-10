@@ -65,6 +65,8 @@ export function FilterBar({
       const params = new URLSearchParams(search.toString());
       if (value && value !== "all") params.set(key, value);
       else params.delete(key);
+      // A narrower result set makes the old page number meaningless.
+      params.delete("page");
       const qs = params.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
@@ -95,6 +97,7 @@ export function FilterBar({
     setDraft("");
     const params = new URLSearchParams(search.toString());
     for (const f of filters) if (f.kind !== "sort") params.delete(f.key);
+    params.delete("page");
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }

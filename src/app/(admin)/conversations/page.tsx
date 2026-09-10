@@ -5,7 +5,8 @@ import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { resultLabel } from "@/components/admin/result-count";
+import { Pagination } from "@/components/admin/pagination";
+import { parsePage } from "@/lib/pagination";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -21,7 +22,7 @@ import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-const LIMIT = 200;
+const PAGE_SIZE = 50;
 
 export default async function ConversationsPage({
   searchParams,
@@ -66,6 +67,8 @@ export default async function ConversationsPage({
   }
   if (and.length) where.AND = and;
 
+  const total = await db.conversation.count({ where });
+  const page = parsePage(p.page, total, PAGE_SIZE);
   const [conversations, escalations] = await Promise.all([
     db.conversation.findMany({
       where,
@@ -80,7 +83,8 @@ export default async function ConversationsPage({
         _count: { select: { messages: true } },
       },
       orderBy: { startedAt: "desc" },
-      take: LIMIT,
+      skip: (page - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
     }),
     // The handover queue is never filtered away: an escalation the filters
     // would hide is exactly the one somebody could miss.
@@ -167,7 +171,7 @@ export default async function ConversationsPage({
           assignedToName: c.assignedTo?.name ?? null,
         }))}
       />
-      <FilterBar filters={filters} resultLabel={resultLabel(conversations.length, LIMIT)} />
+      <FilterBar filters={filters} resultLabel={`${total} ${total === 1 ? "result" : "results"}`} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>
@@ -277,6 +281,7 @@ export default async function ConversationsPage({
           </Table>
         </CardContent>
       </Card>
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} />
     </div>
   );
 }

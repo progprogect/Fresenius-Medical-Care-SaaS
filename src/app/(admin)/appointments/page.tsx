@@ -4,7 +4,8 @@ import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { resultLabel } from "@/components/admin/result-count";
+import { Pagination } from "@/components/admin/pagination";
+import { parsePage } from "@/lib/pagination";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -13,7 +14,7 @@ import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
-const LIMIT = 200;
+const PAGE_SIZE = 50;
 
 export default async function AppointmentsPage({
   searchParams,
@@ -64,11 +65,14 @@ export default async function AppointmentsPage({
   if (and.length) where.AND = and;
 
   const descending = p.range === "past" || (!!to && !from);
+  const total = await db.appointment.count({ where });
+  const page = parsePage(p.page, total, PAGE_SIZE);
   const appointments = await db.appointment.findMany({
     where,
     include: { patient: true, doctor: true, clinic: true, service: true },
     orderBy: { startsAt: descending ? "desc" : "asc" },
-    take: LIMIT,
+    skip: (page - 1) * PAGE_SIZE,
+    take: PAGE_SIZE,
   });
 
   const filters: FilterDef[] = [
@@ -122,7 +126,7 @@ export default async function AppointmentsPage({
   return (
     <div>
       <PageHeader title="Appointments" description="All bookings across the network" />
-      <FilterBar filters={filters} resultLabel={resultLabel(appointments.length, LIMIT)} />
+      <FilterBar filters={filters} resultLabel={`${total} ${total === 1 ? "result" : "results"}`} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>
@@ -168,6 +172,7 @@ export default async function AppointmentsPage({
           </Table>
         </CardContent>
       </Card>
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} />
     </div>
   );
 }
