@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { PageHeader } from "@/components/admin/page-header";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { ResultCount } from "@/components/admin/result-count";
+import { resultLabel } from "@/components/admin/result-count";
 import { Card, CardContent } from "@/components/ui/card";
 import { DoctorsTable } from "./ui";
 import type { Prisma } from "@prisma/client";
@@ -55,32 +55,32 @@ export default async function DoctorsPage({
   });
 
   const filters: FilterDef[] = [
-    { kind: "search", key: "q", placeholder: "Name, specialty or bio...", width: "w-60" },
+    { kind: "search", key: "q", label: "Search", placeholder: "Name, specialty or bio" },
     {
-      kind: "select", key: "clinic", allLabel: "All clinics", width: "w-52",
+      kind: "select", key: "clinic", label: "Clinic", allLabel: "All clinics", primary: true,
       options: clinics.map((c) => ({ value: c.id, label: `${c.city} — ${c.name}` })),
     },
     {
-      kind: "select", key: "specialty", allLabel: "All specialties", width: "w-48",
+      kind: "select", key: "specialty", label: "Specialty", allLabel: "All specialties", primary: true,
       options: specialties.map((s) => ({ value: s.specialty, label: s.specialty })),
     },
     {
-      kind: "select", key: "service", allLabel: "Any service", width: "w-52",
+      kind: "select", key: "service", label: "Service", allLabel: "Any service",
       options: services.map((s) => ({ value: s.id, label: s.name })),
     },
     {
-      kind: "select", key: "language", allLabel: "Any language", width: "w-40",
+      kind: "select", key: "language", label: "Language", allLabel: "Any language",
       options: languages.map((l) => ({ value: l, label: LANGUAGE_LABELS[l] ?? l.toUpperCase() })),
     },
     {
-      kind: "select", key: "schedule", allLabel: "Any schedule", width: "w-44",
+      kind: "select", key: "schedule", label: "Schedule", allLabel: "Any schedule",
       options: [
         { value: "weekend", label: "Works weekends" },
         { value: "none", label: "No hours set" },
       ],
     },
     {
-      kind: "select", key: "status", allLabel: "Any status", width: "w-36",
+      kind: "select", key: "status", label: "Status", allLabel: "Any status",
       options: [
         { value: "active", label: "Active" },
         { value: "inactive", label: "Inactive" },
@@ -94,8 +94,7 @@ export default async function DoctorsPage({
         title="Doctors"
         description="Bios and schedules — the AI recommends doctors from this data"
       />
-      <FilterBar filters={filters} />
-      <ResultCount shown={doctors.length} />
+      <FilterBar filters={filters} resultLabel={resultLabel(doctors.length)} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <DoctorsTable

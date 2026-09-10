@@ -4,7 +4,7 @@ import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { ResultCount } from "@/components/admin/result-count";
+import { resultLabel } from "@/components/admin/result-count";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -72,9 +72,9 @@ export default async function AppointmentsPage({
   });
 
   const filters: FilterDef[] = [
-    { kind: "search", key: "q", placeholder: "Patient name or phone...", width: "w-56" },
+    { kind: "search", key: "q", label: "Search", placeholder: "Patient name or phone" },
     {
-      kind: "select", key: "range", allLabel: "All time", width: "w-36",
+      kind: "select", key: "range", label: "Period", allLabel: "All time", primary: true,
       options: [
         { value: "upcoming", label: "Upcoming" },
         { value: "today", label: "Today" },
@@ -82,10 +82,8 @@ export default async function AppointmentsPage({
         { value: "past", label: "Past" },
       ],
     },
-    { kind: "date", key: "from", label: "from", width: "w-38" },
-    { kind: "date", key: "to", label: "to", width: "w-38" },
     {
-      kind: "select", key: "status", allLabel: "All statuses", width: "w-40",
+      kind: "select", key: "status", label: "Status", allLabel: "Any status", primary: true,
       options: [
         { value: "BOOKED", label: "Booked" },
         { value: "CONFIRMED", label: "Confirmed" },
@@ -95,19 +93,19 @@ export default async function AppointmentsPage({
       ],
     },
     {
-      kind: "select", key: "clinic", allLabel: "All clinics", width: "w-52",
+      kind: "select", key: "clinic", label: "Clinic", allLabel: "Any clinic",
       options: clinics.map((c) => ({ value: c.id, label: `${c.city} — ${c.name}` })),
     },
     {
-      kind: "select", key: "doctor", allLabel: "All doctors", width: "w-48",
+      kind: "select", key: "doctor", label: "Doctor", allLabel: "Any doctor",
       options: doctors.map((d) => ({ value: d.id, label: `${d.name} (${d.clinic.city})` })),
     },
     {
-      kind: "select", key: "service", allLabel: "All services", width: "w-52",
+      kind: "select", key: "service", label: "Service", allLabel: "Any service",
       options: services.map((s) => ({ value: s.id, label: s.name })),
     },
     {
-      kind: "select", key: "source", allLabel: "Any source", width: "w-44",
+      kind: "select", key: "source", label: "Booked via", allLabel: "Any source",
       options: [
         { value: "WIDGET_CHAT", label: "Widget chat" },
         { value: "WIDGET_VOICE", label: "Widget voice" },
@@ -117,13 +115,14 @@ export default async function AppointmentsPage({
         { value: "BACKFILL", label: "Slot offer" },
       ],
     },
+    { kind: "date", key: "from", label: "From date" },
+    { kind: "date", key: "to", label: "To date" },
   ];
 
   return (
     <div>
       <PageHeader title="Appointments" description="All bookings across the network" />
-      <FilterBar filters={filters} />
-      <ResultCount shown={appointments.length} capped={LIMIT} />
+      <FilterBar filters={filters} resultLabel={resultLabel(appointments.length, LIMIT)} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>

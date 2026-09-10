@@ -3,10 +3,13 @@
 import * as React from "react";
 import { addDays, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
-import { ChevronLeft, ChevronRight, GripVertical, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, GripVertical, Plus, SlidersHorizontal, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Separator } from "@/components/ui/separator";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -319,11 +322,46 @@ export function CalendarView({
   const clinicServices = services.filter((s) => clinicServiceIds.has(s.id));
   const hiddenCount = appointments.length - visible.length;
 
+  const STATUS_LABELS: Record<string, string> = {
+    all: "Including cancelled",
+    BOOKED: "Booked only",
+    CONFIRMED: "Confirmed only",
+    COMPLETED: "Completed only",
+    CANCELLED: "Cancelled only",
+    NO_SHOW: "No-shows",
+  };
+  const activeChips = [
+    query.trim() && { label: "Patient", value: `"${query.trim()}"`, clear: () => setQuery("") },
+    serviceId !== "all" && {
+      label: "Service",
+      value: services.find((s) => s.id === serviceId)?.name ?? "",
+      clear: () => setServiceId("all"),
+    },
+    status !== "open" && {
+      label: "Status",
+      value: STATUS_LABELS[status] ?? status,
+      clear: () => setStatus("open"),
+    },
+    source !== "all" && {
+      label: "Booked via",
+      value: source.toLowerCase().replace(/_/g, " "),
+      clear: () => setSource("all"),
+    },
+  ].filter(Boolean) as Array<{ label: string; value: string; clear: () => void }>;
+  const activeFilterCount = activeChips.length;
+
+  function resetFilters() {
+    setQuery("");
+    setServiceId("all");
+    setStatus("open");
+    setSource("all");
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={clinicId} onValueChange={(v) => { setClinicId(v); setDoctorId("all"); setServiceId("all"); }}>
-          <SelectTrigger className="w-60"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-60" aria-label="Clinic"><SelectValue /></SelectTrigger>
           <SelectContent>
             {clinics.map((c) => (
               <SelectItem key={c.id} value={c.id}>{c.city} — {c.name}</SelectItem>
@@ -331,7 +369,7 @@ export function CalendarView({
           </SelectContent>
         </Select>
         <Select value={doctorId} onValueChange={setDoctorId}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-48" aria-label="Doctor"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All doctors</SelectItem>
             {clinicDoctors.map((d) => (
@@ -339,80 +377,140 @@ export function CalendarView({
             ))}
           </SelectContent>
         </Select>
-        <Select value={serviceId} onValueChange={setServiceId}>
-          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All services</SelectItem>
-            {clinicServices.map((s) => (
-              <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={status} onValueChange={setStatus}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="open">Active visits</SelectItem>
-            <SelectItem value="all">Include cancelled</SelectItem>
-            <SelectItem value="BOOKED">Booked only</SelectItem>
-            <SelectItem value="CONFIRMED">Confirmed only</SelectItem>
-            <SelectItem value="COMPLETED">Completed only</SelectItem>
-            <SelectItem value="CANCELLED">Cancelled only</SelectItem>
-            <SelectItem value="NO_SHOW">No-shows</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={source} onValueChange={setSource}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any source</SelectItem>
-            <SelectItem value="WIDGET_CHAT">Widget chat</SelectItem>
-            <SelectItem value="WIDGET_VOICE">Widget voice</SelectItem>
-            <SelectItem value="PHONE">Phone</SelectItem>
-            <SelectItem value="WHATSAPP">WhatsApp</SelectItem>
-            <SelectItem value="MANUAL">Staff</SelectItem>
-            <SelectItem value="BACKFILL">Slot offer</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          placeholder="Find patient..."
-          className="w-44"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <Tabs value={view} onValueChange={(v) => setView(v as "day" | "week")}>
-          <TabsList>
-            <TabsTrigger value="day">Day</TabsTrigger>
-            <TabsTrigger value="week">Week</TabsTrigger>
-          </TabsList>
-        </Tabs>
+
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="gap-1.5">
+              <SlidersHorizontal className="size-3.5" />
+              Filters
+              {activeFilterCount > 0 && (
+                <Badge variant="secondary" className="ml-0.5 h-5 min-w-5 justify-center px-1 tabular-nums">
+                  {activeFilterCount}
+                </Badge>
+              )}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Filters</span>
+                {activeFilterCount > 0 && (
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={resetFilters}>
+                    Reset
+                  </Button>
+                )}
+              </div>
+              <Separator />
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Patient</Label>
+                <Input
+                  placeholder="Search by name or phone"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Service</Label>
+                <Select value={serviceId} onValueChange={setServiceId}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All services</SelectItem>
+                    {clinicServices.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Status</Label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="open">Active visits</SelectItem>
+                    <SelectItem value="all">Include cancelled</SelectItem>
+                    <SelectItem value="BOOKED">Booked only</SelectItem>
+                    <SelectItem value="CONFIRMED">Confirmed only</SelectItem>
+                    <SelectItem value="COMPLETED">Completed only</SelectItem>
+                    <SelectItem value="CANCELLED">Cancelled only</SelectItem>
+                    <SelectItem value="NO_SHOW">No-shows</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Booked via</Label>
+                <Select value={source} onValueChange={setSource}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any source</SelectItem>
+                    <SelectItem value="WIDGET_CHAT">Widget chat</SelectItem>
+                    <SelectItem value="WIDGET_VOICE">Widget voice</SelectItem>
+                    <SelectItem value="PHONE">Phone</SelectItem>
+                    <SelectItem value="WHATSAPP">WhatsApp</SelectItem>
+                    <SelectItem value="MANUAL">Staff</SelectItem>
+                    <SelectItem value="BACKFILL">Slot offer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+
         <div className="ml-auto flex items-center gap-1.5">
-          <Button variant="outline" size="icon" onClick={() => setAnchor((a) => addDays(a, view === "day" ? -1 : -7))}>
+          <Button variant="outline" size="icon" aria-label="Previous" onClick={() => setAnchor((a) => addDays(a, view === "day" ? -1 : -7))}>
             <ChevronLeft className="size-4" />
           </Button>
           <Button variant="outline" onClick={() => setAnchor(new Date())}>Today</Button>
-          <Button variant="outline" size="icon" onClick={() => setAnchor((a) => addDays(a, view === "day" ? 1 : 7))}>
+          <Button variant="outline" size="icon" aria-label="Next" onClick={() => setAnchor((a) => addDays(a, view === "day" ? 1 : 7))}>
             <ChevronRight className="size-4" />
           </Button>
-          <Button className="ml-2" onClick={() => setNewOpen(true)}>
+          <Tabs value={view} onValueChange={(v) => setView(v as "day" | "week")} className="ml-1">
+            <TabsList>
+              <TabsTrigger value="day">Day</TabsTrigger>
+              <TabsTrigger value="week">Week</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Button className="ml-1" onClick={() => setNewOpen(true)}>
             <Plus className="size-4" /> New appointment
           </Button>
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <span className="font-medium">{title}</span>
         <span className="text-xs text-muted-foreground">local time {tz}</span>
         <span className="flex items-center gap-1 text-xs text-muted-foreground">
           <GripVertical className="size-3" />
           drag a visit to change its time{view === "day" ? " or doctor" : " or day"}
         </span>
-        {hiddenCount > 0 && (
-          <Badge variant="outline" className="font-normal">{hiddenCount} hidden by filters</Badge>
-        )}
         {saving && <Badge variant="secondary" className="font-normal">saving…</Badge>}
         {dragView?.moved && (
           <Badge variant="secondary" className="font-normal">
             drop to move · release outside the grid to keep the current time
           </Badge>
+        )}
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeChips.map((chip) => (
+              <span
+                key={chip.label}
+                className="inline-flex items-center gap-1 rounded-full border bg-background py-0.5 pl-2.5 pr-1 text-xs"
+              >
+                <span className="text-muted-foreground">{chip.label}:</span>
+                <span className="font-medium">{chip.value}</span>
+                <button
+                  type="button"
+                  onClick={chip.clear}
+                  aria-label={`Remove ${chip.label} filter`}
+                  className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+            {hiddenCount > 0 && (
+              <span className="text-xs text-muted-foreground">{hiddenCount} hidden</span>
+            )}
+          </div>
         )}
       </div>
 

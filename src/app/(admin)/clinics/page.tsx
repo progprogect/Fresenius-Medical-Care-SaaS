@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { PageHeader } from "@/components/admin/page-header";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { ResultCount } from "@/components/admin/result-count";
+import { resultLabel } from "@/components/admin/result-count";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClinicsTable } from "./ui";
 import type { Prisma } from "@prisma/client";
@@ -46,20 +46,20 @@ export default async function ClinicsPage({
   });
 
   const filters: FilterDef[] = [
-    { kind: "search", key: "q", placeholder: "Name, city, address or phone...", width: "w-64" },
+    { kind: "search", key: "q", label: "Search", placeholder: "Name, city, address or phone" },
     {
-      kind: "select", key: "country", allLabel: "All countries", width: "w-44",
+      kind: "select", key: "country", label: "Country", allLabel: "All countries", primary: true,
       options: countries.map((c) => ({ value: c.country, label: c.country })),
     },
     {
-      kind: "select", key: "status", allLabel: "Any status", width: "w-40",
+      kind: "select", key: "status", label: "Status", allLabel: "Any status",
       options: [
         { value: "active", label: "Accepting bookings" },
         { value: "inactive", label: "Inactive" },
       ],
     },
     {
-      kind: "select", key: "staffed", allLabel: "Any staffing", width: "w-44",
+      kind: "select", key: "staffed", label: "Staffing", allLabel: "Any staffing",
       options: [
         { value: "yes", label: "Has active doctors" },
         { value: "no", label: "No active doctors" },
@@ -73,8 +73,7 @@ export default async function ClinicsPage({
         title="Clinics"
         description="Locations across Europe — the AI routes patients using this list"
       />
-      <FilterBar filters={filters} />
-      <ResultCount shown={clinics.length} />
+      <FilterBar filters={filters} resultLabel={resultLabel(clinics.length)} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <ClinicsTable

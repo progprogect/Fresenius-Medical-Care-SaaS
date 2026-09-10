@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { ResultCount } from "@/components/admin/result-count";
+import { resultLabel } from "@/components/admin/result-count";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -73,9 +73,9 @@ export default async function PatientsPage({
   });
 
   const filters: FilterDef[] = [
-    { kind: "search", key: "q", placeholder: "Name, phone or email...", width: "w-60" },
+    { kind: "search", key: "q", label: "Search", placeholder: "Name, phone or email" },
     {
-      kind: "select", key: "visits", allLabel: "Any visit history", width: "w-48",
+      kind: "select", key: "visits", label: "Visits", allLabel: "Any visit history", primary: true,
       options: [
         { value: "upcoming", label: "Has upcoming visit" },
         { value: "past_only", label: "Past visits only" },
@@ -83,11 +83,11 @@ export default async function PatientsPage({
       ],
     },
     {
-      kind: "select", key: "clinic", allLabel: "Any clinic", width: "w-52",
+      kind: "select", key: "clinic", label: "Clinic", allLabel: "Any clinic",
       options: clinics.map((c) => ({ value: c.id, label: `${c.city} — ${c.name}` })),
     },
     {
-      kind: "select", key: "language", allLabel: "Any language", width: "w-40",
+      kind: "select", key: "language", label: "Language", allLabel: "Any language",
       options: [
         { value: "en", label: "English" }, { value: "de", label: "German" },
         { value: "fr", label: "French" }, { value: "es", label: "Spanish" },
@@ -95,15 +95,15 @@ export default async function PatientsPage({
       ],
     },
     {
-      kind: "select", key: "optIn", allLabel: "Any offer opt-in", width: "w-44",
+      kind: "select", key: "optIn", label: "Slot offers", allLabel: "Any offer opt-in",
       options: [
-        { value: "yes", label: "Accepts slot offers" },
+        { value: "yes", label: "Accepts offers" },
         { value: "no", label: "Opted out" },
       ],
     },
     {
-      kind: "select", key: "sort", allLabel: "Sort: name", width: "w-40",
-      options: [{ value: "newest", label: "Sort: newest first" }],
+      kind: "sort", key: "sort", label: "Sort", defaultLabel: "Name (A–Z)",
+      options: [{ value: "newest", label: "Newest first" }],
     },
   ];
 
@@ -113,8 +113,7 @@ export default async function PatientsPage({
         title="Patients"
         description="Patient registry the AI uses for identity verification"
       />
-      <FilterBar filters={filters} />
-      <ResultCount shown={patients.length} capped={LIMIT} />
+      <FilterBar filters={filters} resultLabel={resultLabel(patients.length, LIMIT)} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>

@@ -5,7 +5,7 @@ import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { FilterBar, type FilterDef } from "@/components/admin/filter-bar";
-import { ResultCount } from "@/components/admin/result-count";
+import { resultLabel } from "@/components/admin/result-count";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -70,17 +70,17 @@ export default async function ConversationsPage({
   });
 
   const filters: FilterDef[] = [
-    { kind: "search", key: "q", placeholder: "Patient or message text...", width: "w-60" },
+    { kind: "search", key: "q", label: "Search", placeholder: "Patient or message text" },
     {
-      kind: "select", key: "status", allLabel: "All statuses", width: "w-44",
+      kind: "select", key: "status", label: "Status", allLabel: "Any status", primary: true,
       options: [
-        { value: "ACTIVE", label: "Active" },
         { value: "NEEDS_HUMAN", label: "Needs human" },
+        { value: "ACTIVE", label: "Active" },
         { value: "RESOLVED", label: "Resolved" },
       ],
     },
     {
-      kind: "select", key: "channel", allLabel: "All channels", width: "w-44",
+      kind: "select", key: "channel", label: "Channel", allLabel: "Any channel", primary: true,
       options: [
         { value: "WIDGET_CHAT", label: "Widget chat" },
         { value: "WIDGET_VOICE", label: "Widget voice" },
@@ -89,7 +89,7 @@ export default async function ConversationsPage({
       ],
     },
     {
-      kind: "select", key: "since", allLabel: "Any time", width: "w-40",
+      kind: "select", key: "since", label: "Started", allLabel: "Any time",
       options: [
         { value: "today", label: "Today" },
         { value: "week", label: "Last 7 days" },
@@ -97,14 +97,14 @@ export default async function ConversationsPage({
       ],
     },
     {
-      kind: "select", key: "verified", allLabel: "Any verification", width: "w-44",
+      kind: "select", key: "verified", label: "Verification", allLabel: "Any verification",
       options: [
         { value: "yes", label: "Verified caller" },
         { value: "no", label: "Not verified" },
       ],
     },
     {
-      kind: "select", key: "identified", allLabel: "Any patient link", width: "w-44",
+      kind: "select", key: "identified", label: "Patient link", allLabel: "Any patient link",
       options: [
         { value: "yes", label: "Linked to patient" },
         { value: "no", label: "Unidentified" },
@@ -118,8 +118,7 @@ export default async function ConversationsPage({
         title="Conversations"
         description="Every chat and voice session the AI assistant handled — click a row to read the full transcript"
       />
-      <FilterBar filters={filters} />
-      <ResultCount shown={conversations.length} capped={LIMIT} />
+      <FilterBar filters={filters} resultLabel={resultLabel(conversations.length, LIMIT)} />
       <Card className="mt-3">
         <CardContent className="pt-0">
           <Table>
