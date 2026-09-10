@@ -21,6 +21,12 @@ See README.md and docs/ARCHITECTURE.md first.
   patient already said. Phone numbers and dates of birth are parsed tolerantly in
   `src/lib/patient-input.ts`; when a value is unclear the agent reads back its understanding for
   a yes/no instead of asking for a repeat.
+- Languages: ElevenLabs refuses a multilingual TTS model while the agent's primary language is
+  `en`, so the primary must be a non-English market language (German) with English configured as
+  an additional one. `syncElevenLabsAgent` picks `eleven_turbo_v2_5`, builds `language_presets`
+  from the extras and translates the greeting into every configured language. One voice serves
+  all of them. The conversation's detected language is stored on `Conversation.language` via the
+  `set_language` tool.
 - The ElevenLabs agent stores a SNAPSHOT of the system prompt, so anything time-dependent must be
   a dynamic variable: the calendar goes in as `{{today_calendar}}` and the widget supplies it at
   session start. Re-sync the voice agent after every prompt change.

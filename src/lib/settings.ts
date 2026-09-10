@@ -3,12 +3,21 @@ import { db } from "@/lib/db";
 export type AgentSettings = {
   displayName: string;
   persona: string;
-  language: string; // primary ISO code
+  /**
+   * Primary ISO language of the voice agent. ElevenLabs forbids a multilingual
+   * TTS model whenever this is "en", so an English-first agent can only ever
+   * speak English; pick the market's own language to unlock the others.
+   */
+  language: string;
   extraLanguages: string[];
   model: string; // OpenAI model for text brain
-  voiceId: string; // ElevenLabs voice
+  voiceId: string; // ElevenLabs voice, shared across every language
   elevenLabsAgentId: string;
   firstMessage: string;
+  /** Cached greeting per extra language, keyed by ISO code. */
+  firstMessageTranslations: Record<string, string>;
+  /** Hash of the greeting the cache was built from. */
+  translationsFor: string;
 };
 
 export type TwilioSettings = {
@@ -45,13 +54,15 @@ const DEFAULTS: {
     displayName: "Nora",
     persona:
       "You are Nora, the friendly virtual assistant of the Fresenius Medical Care clinic network. You help patients book, view, reschedule and cancel appointments across our European clinic network. You are warm, concise and professional. You never give medical advice.",
-    language: "en",
-    extraLanguages: ["de", "fr", "es", "it", "pl"],
+    language: "de",
+    extraLanguages: ["en", "fr", "es", "it", "pl"],
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     voiceId: "eJRhExUeshH24BIBe89c", // Kate — natural, warm, professional
     elevenLabsAgentId: "",
     firstMessage:
       "Hello! I'm Nora, your clinic assistant. I can help you book, move or cancel an appointment. How can I help you today?",
+    firstMessageTranslations: {},
+    translationsFor: "",
   } satisfies AgentSettings,
   twilio: {
     mode: "demo",

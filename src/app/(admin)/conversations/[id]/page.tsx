@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/admin/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ResolveButton } from "./resolve-button";
 import { cn } from "@/lib/utils";
+import { languageLabel } from "@/lib/languages";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +79,10 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
                 )}
               </div>
               <div><span className="text-muted-foreground">Verified: </span>{conv.verified ? "yes" : "no"}</div>
+              <div>
+                <span className="text-muted-foreground">Language: </span>
+                {conv.language ? languageLabel(conv.language) : "not detected"}
+              </div>
               <div><span className="text-muted-foreground">Channel: </span>{conv.channel.toLowerCase().replace(/_/g, " ")}</div>
               {conv.externalId && (
                 <div className="break-all">

@@ -4,6 +4,7 @@ import * as React from "react";
 import { Mic, PhoneOff, Send, Stethoscope } from "lucide-react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { cn } from "@/lib/utils";
+import { normalizeLanguageTag } from "@/lib/languages";
 
 type WidgetConfig = {
   title: string;
@@ -135,10 +136,18 @@ function ChatWidgetInner() {
       const res = await fetch("/api/voice/signed-url");
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      // Open the call in the visitor's own language when we support it, so the
+      // greeting already matches; the agent still switches if they speak another.
+      const browserLanguage = normalizeLanguageTag(navigator.language);
+      const supported: string[] = data.languages ?? [];
+      const startLanguage =
+        browserLanguage && supported.includes(browserLanguage) ? browserLanguage : undefined;
+
       setVoiceOpen(true);
       conversation.startSession({
         signedUrl: data.signedUrl,
         dynamicVariables: data.dynamicVariables,
+        ...(startLanguage ? { overrides: { agent: { language: startLanguage } } } : {}),
       });
     } catch {
       setVoiceOpen(false);

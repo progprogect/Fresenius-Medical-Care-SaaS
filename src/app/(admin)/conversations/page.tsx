@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import { languageLabel, SUPPORTED_LANGUAGES } from "@/lib/languages";
 import type { Prisma } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +35,7 @@ export default async function ConversationsPage({
   if (p.verified === "no") and.push({ verified: false });
   if (p.identified === "yes") and.push({ NOT: { patientId: null } });
   if (p.identified === "no") and.push({ patientId: null });
+  if (p.language && p.language !== "all") and.push({ language: p.language });
   if (p.q) {
     and.push({
       OR: [
@@ -97,6 +99,10 @@ export default async function ConversationsPage({
       ],
     },
     {
+      kind: "select", key: "language", label: "Language", allLabel: "Any language",
+      options: SUPPORTED_LANGUAGES.map((l) => ({ value: l.code, label: l.label })),
+    },
+    {
       kind: "select", key: "verified", label: "Verification", allLabel: "Any verification",
       options: [
         { value: "yes", label: "Verified caller" },
@@ -126,6 +132,7 @@ export default async function ConversationsPage({
               <TableRow>
                 <TableHead>Started</TableHead>
                 <TableHead>Channel</TableHead>
+                <TableHead>Language</TableHead>
                 <TableHead>Patient</TableHead>
                 <TableHead>Last message</TableHead>
                 <TableHead className="text-right">Messages</TableHead>
@@ -148,6 +155,15 @@ export default async function ConversationsPage({
                   <TableCell className="p-0 text-xs">
                     <Link href={`/conversations/${c.id}`} className="block px-2 py-2">
                       {c.channel.toLowerCase().replace(/_/g, " ")}
+                    </Link>
+                  </TableCell>
+                  <TableCell className="p-0 text-xs">
+                    <Link href={`/conversations/${c.id}`} className="block px-2 py-2">
+                      {c.language ? (
+                        languageLabel(c.language)
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </Link>
                   </TableCell>
                   <TableCell className="p-0 font-medium">
@@ -188,7 +204,7 @@ export default async function ConversationsPage({
               ))}
               {conversations.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
                     No conversations match the filters.
                   </TableCell>
                 </TableRow>

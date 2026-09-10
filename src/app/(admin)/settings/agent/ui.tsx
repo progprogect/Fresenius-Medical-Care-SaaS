@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Bot, RefreshCw, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -15,14 +16,9 @@ import { Badge } from "@/components/ui/badge";
 import type { AgentSettings } from "@/lib/settings";
 import { saveAgentSettingsAction } from "./actions";
 
-const LANGUAGES = [
-  { code: "en", label: "English" },
-  { code: "de", label: "German" },
-  { code: "fr", label: "French" },
-  { code: "es", label: "Spanish" },
-  { code: "it", label: "Italian" },
-  { code: "pl", label: "Polish" },
-];
+import { SUPPORTED_LANGUAGES } from "@/lib/languages";
+
+const LANGUAGES = SUPPORTED_LANGUAGES.map((l) => ({ code: l.code, label: l.label }));
 
 export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
   const [form, setForm] = React.useState(initial);
@@ -32,6 +28,7 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
     Array<{ voiceId: string; name: string; labels: string; category: string; saved: boolean }>
   >([]);
   const [agentId, setAgentId] = React.useState(initial.elevenLabsAgentId);
+  const [languages, setLanguages] = React.useState<string[]>([]);
 
   React.useEffect(() => {
     fetch("/api/elevenlabs/voices")
@@ -78,9 +75,12 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
     const res = await fetch("/api/elevenlabs/sync", { method: "POST" });
     const data = await res.json();
     setSyncing(false);
-    if (!res.ok) return void toast.error(data.error ?? "Sync failed");
+    if (!res.ok) return void toast.error(data.error ?? "Sync failed", { duration: 8000 });
     setAgentId(data.agentId);
-    toast.success(data.created ? "Voice agent created in ElevenLabs" : "Voice agent updated");
+    setLanguages(data.languages ?? []);
+    toast.success(
+      `${data.created ? "Voice agent created" : "Voice agent updated"} — speaks ${(data.languages ?? []).join(", ")}`
+    );
   }
 
   return (
@@ -106,6 +106,9 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                The language a call opens in. The assistant switches as soon as it hears the patient.
+              </p>
             </div>
           </div>
           <div className="space-y-2">
@@ -176,6 +179,37 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
               )}
             </div>
           </div>
+          <div className="space-y-2">
+            <Label>Additional languages the assistant speaks</Label>
+            <div className="flex flex-wrap gap-3 rounded-md border p-3">
+              {LANGUAGES.filter((l) => l.code !== form.language).map((l) => (
+                <label key={l.code} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={form.extraLanguages.includes(l.code)}
+                    onCheckedChange={(v) =>
+                      setForm({
+                        ...form,
+                        extraLanguages: v
+                          ? [...form.extraLanguages, l.code]
+                          : form.extraLanguages.filter((c) => c !== l.code),
+                      })
+                    }
+                  />
+                  {l.label}
+                </label>
+              ))}
+            </div>
+            {form.language === "en" && form.extraLanguages.length > 0 && (
+              <p className="text-xs text-destructive">
+                ElevenLabs locks an English-first agent to its English-only voice model, so the other
+                languages would sound wrong. Pick a non-English primary language — German, for
+                instance — and keep English in this list.
+              </p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              The same voice speaks every language; only the greeting is translated.
+            </p>
+          </div>
           <Button onClick={save} disabled={busy}>Save settings</Button>
         </CardContent>
       </Card>
@@ -203,6 +237,12 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
               <Badge variant="outline">not created yet</Badge>
             )}
           </div>
+          {languages.length > 0 && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">Speaks: </span>
+              {languages.join(", ")}
+            </div>
+          )}
           <Button onClick={sync} disabled={syncing} variant={agentId ? "outline" : "default"}>
             <RefreshCw className={syncing ? "size-4 animate-spin" : "size-4"} />
             {agentId ? "Re-sync agent" : "Create voice agent"}

@@ -11,6 +11,7 @@ import {
 import { createOffersForFreedSlot } from "@/lib/backfill";
 import { fmtClinic } from "@/lib/format";
 import { parseDateOfBirth, parsePhone } from "@/lib/patient-input";
+import { continueInLanguage, isSupportedLanguage, languageLabel, SUPPORTED_LANGUAGES } from "@/lib/languages";
 import { formatInTimeZone } from "date-fns-tz";
 
 /**
@@ -345,7 +346,7 @@ const getMyAppointments: ToolDef = {
 const findSlots: ToolDef = {
   name: "find_slots",
   description:
-    "Find available appointment slots for a service. Optionally filter by clinic, doctor, start date and time of day. Present 2-3 best options to the patient. Each slot has a slotRef used for booking.",
+    "Find available appointment slots for a service. serviceId, clinicId and doctorId must be the opaque ids returned by list_services / list_clinics / list_doctors or by get_my_appointments — never a human-readable name. Optionally filter by start date and time of day. Present 2-3 best options. Each slot has a slotRef used for booking.",
   schema: z.object({
     serviceId: z.string(),
     clinicId: z.string().optional(),
@@ -531,6 +532,44 @@ const cancelTool: ToolDef = {
   },
 };
 
+const setLanguage: ToolDef = {
+  name: "set_language",
+  description:
+    "Call this ONCE, on your very first reply, with the language the patient is actually writing or speaking — not the language you were greeted in. It pins the conversation to that language so colleagues see it and the patient's record stays right. Call it again only if the patient explicitly asks to switch.",
+  schema: z.object({
+    language: z
+      .string()
+      .describe(
+        `ISO 639-1 code of the language the patient is using: ${SUPPORTED_LANGUAGES.map((l) => `${l.code} (${l.label})`).join(", ")}`
+      ),
+  }),
+  execute: async (args, ctx) => {
+    const code = String(args.language).toLowerCase().split("-")[0];
+    if (!isSupportedLanguage(code))
+      return {
+        error: "UNSUPPORTED_LANGUAGE",
+        hint: `We do not support ${code}. Continue in English and offer to hand over to a human.`,
+      };
+    const conv = await db.conversation.update({
+      where: { id: ctx.conversationId },
+      data: { language: code },
+      include: { patient: true },
+    });
+    // Keep the patient record in step so later channels open in the same language.
+    if (conv.patientId && conv.patient?.language !== code) {
+      await db.patient.update({ where: { id: conv.patientId }, data: { language: code } });
+    }
+    await logAudit({
+      actor: actorFor(ctx),
+      action: "LANGUAGE_SET",
+      entity: "Conversation",
+      entityId: ctx.conversationId,
+      details: { language: code },
+    });
+    return { language: code, label: languageLabel(code), note: continueInLanguage(code) };
+  },
+};
+
 const escalate: ToolDef = {
   name: "escalate_to_human",
   description:
@@ -559,6 +598,7 @@ const escalate: ToolDef = {
 };
 
 export const AGENT_TOOLS: ToolDef[] = [
+  setLanguage,
   listClinics,
   listServices,
   listDoctors,

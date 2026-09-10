@@ -15,11 +15,18 @@ const AgentInput = z.object({
   voiceId: z.string(),
 });
 
+const SUPPORTED = new Set(["de", "en", "fr", "es", "it", "pl", "nl", "pt"]);
+
 export async function saveAgentSettingsAction(input: z.infer<typeof AgentInput>) {
   await requireSession();
   const parsed = AgentInput.safeParse(input);
   if (!parsed.success) return { ok: false as const, error: "Invalid agent settings" };
-  await saveSettings("agent", parsed.data);
+  if (!SUPPORTED.has(parsed.data.language))
+    return { ok: false as const, error: "That primary language is not supported" };
+  const extraLanguages = [...new Set(parsed.data.extraLanguages)].filter(
+    (code) => SUPPORTED.has(code) && code !== parsed.data.language
+  );
+  await saveSettings("agent", { ...parsed.data, extraLanguages });
   revalidatePath("/settings/agent");
   return { ok: true as const };
 }

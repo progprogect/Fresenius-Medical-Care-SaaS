@@ -175,6 +175,7 @@ model Conversation {
   id                String              @id @default(cuid())
   channel           ConversationChannel
   status            ConversationStatus  @default(ACTIVE)
+  language          String? // ISO code detected on the first turn and kept for the session
   patientId         String?
   patient           Patient?            @relation(fields: [patientId], references: [id])
   verified          Boolean             @default(false) // UC-1 verified session
