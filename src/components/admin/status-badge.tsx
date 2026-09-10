@@ -9,7 +9,7 @@ const STYLES: Record<string, string> = {
   NO_SHOW: "bg-amber-100 text-amber-700 border-amber-200",
   ACTIVE: "bg-sky-100 text-sky-700 border-sky-200",
   RESOLVED: "bg-emerald-100 text-emerald-700 border-emerald-200",
-  NEEDS_HUMAN: "bg-red-100 text-red-600 border-red-200",
+  NEEDS_HUMAN: "bg-amber-100 text-amber-700 border-amber-200",
   PENDING: "bg-amber-100 text-amber-700 border-amber-200",
   SENT: "bg-sky-100 text-sky-700 border-sky-200",
   ACCEPTED: "bg-emerald-100 text-emerald-700 border-emerald-200",

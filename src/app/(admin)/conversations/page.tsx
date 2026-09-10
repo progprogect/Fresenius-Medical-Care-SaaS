@@ -195,13 +195,13 @@ export default async function ConversationsPage({
                   key={c.id}
                   className={cn(
                     "cursor-pointer transition-colors hover:bg-accent/60",
-                    c.status === "NEEDS_HUMAN" && "bg-red-50/60 hover:bg-red-50"
+                    c.status === "NEEDS_HUMAN" && "bg-amber-50/60 hover:bg-amber-50"
                   )}
                 >
                   <TableCell className="whitespace-nowrap p-0 font-mono text-xs">
                     <Link href={`/conversations/${c.id}`} className="flex items-center gap-1.5 px-2 py-2">
                       {c.status === "NEEDS_HUMAN" && (
-                        <AlertTriangle className="size-3.5 shrink-0 text-red-500" aria-label="Needs a human" />
+                        <AlertTriangle className="size-3.5 shrink-0 text-amber-600" aria-label="Needs a human" />
                       )}
                       {fmtClinic(c.startedAt, "Europe/Berlin", "d MMM HH:mm")}
                     </Link>

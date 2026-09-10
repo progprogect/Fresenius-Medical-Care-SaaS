@@ -103,7 +103,7 @@ model Patient {
   phone          String    @unique
   email          String?
   dateOfBirth    DateTime?
-  language       String    @default("en")
+  language       String    @default("de")
   whatsappOptIn  Boolean   @default(true)
   notes          String    @default("")
   createdAt      DateTime  @default(now())

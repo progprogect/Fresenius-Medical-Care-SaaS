@@ -47,16 +47,16 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
       </PageHeader>
 
       {conv.status === "NEEDS_HUMAN" && (
-        <div className="mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-500" />
+        <div className="mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-red-800">
+            <p className="text-sm font-medium text-amber-900">
               The assistant handed this conversation to a human
             </p>
             {conv.escalationReason && (
-              <p className="mt-0.5 text-sm text-red-700">{conv.escalationReason}</p>
+              <p className="mt-0.5 text-sm text-amber-800">{conv.escalationReason}</p>
             )}
-            <p className="mt-1 text-xs text-red-700/80">
+            <p className="mt-1 text-xs text-amber-800/80">
               {conv.assignedTo
                 ? mine
                   ? "You are handling this. Mark it handled once the patient has been helped."

@@ -7,10 +7,18 @@
  * normalised here instead and the agent never has to dictate a shape.
  */
 
+import { spokenNumbersToDigits } from "@/lib/spoken-numbers";
+
 const DIGIT_WORDS: Record<string, string> = {
   zero: "0", oh: "0", o: "0", nought: "0", null: "0", nul: "0",
   one: "1", two: "2", three: "3", four: "4", five: "5",
   six: "6", seven: "7", eight: "8", nine: "9",
+  // Callers read their number out in their own language.
+  eins: "1", ein: "1", zwei: "2", zwo: "2", drei: "3", vier: "4",
+  fuenf: "5", sechs: "6", sieben: "7", acht: "8", neun: "9",
+  un: "1", deux: "2", trois: "3", quatre: "4", cinq: "5", sept: "7", huit: "8", neuf: "9",
+  cero: "0", uno: "1", dos: "2", tres: "3", cuatro: "4", cinco: "5", seis: "6", siete: "7", ocho: "8", nueve: "9",
+  due: "2", tre: "3", quattro: "4", cinque: "5", sei: "6", sette: "7", otto: "8", nove: "9",
 };
 
 /**
@@ -155,8 +163,18 @@ function expandYear(value: number) {
  * caller decides, so nothing is silently guessed on the way into the record.
  */
 export function parseDateOfBirth(raw: string): DateParse {
-  const input = String(raw ?? "").trim().toLowerCase();
-  if (!input) return { candidates: [], ambiguous: false };
+  const spoken = String(raw ?? "").trim().toLowerCase();
+  if (!spoken) return { candidates: [], ambiguous: false };
+
+  // Speech-to-text writes a spoken date as words, so fold those into digits
+  // before anything else looks at the string. Accents and the sharp s go too,
+  // because the number tables are written in plain ASCII.
+  const input = spokenNumbersToDigits(
+    spoken
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\u00df/g, "ss")
+  );
 
   const add = (set: Set<string>, value: string | null) => {
     if (value) set.add(value);
@@ -188,11 +206,7 @@ export function parseDateOfBirth(raw: string): DateParse {
   }
 
   // 12 April 1985 / April 12, 1985 / 25. Januar 1989 / 25 de enero de 1989
-  const words = input
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/ß/g, "ss")
-    .replace(/(\d+)(st|nd|rd|th|er|ere|eme|º|ª)\b/g, "$1");
+  const words = input.replace(/(\d+)(st|nd|rd|th|er|ere|eme|o|a)\b/g, "$1");
   const tokens = words.split(/[\s,.\-/]+/).filter(Boolean);
   let month: number | undefined;
   const numbers: number[] = [];

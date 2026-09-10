@@ -48,3 +48,23 @@ const CONTINUE_IN: Record<string, string> = {
 export function continueInLanguage(code: string) {
   return CONTINUE_IN[code] ?? `From now on, answer only in ${languageLabel(code)}.`;
 }
+
+/**
+ * The one sentence the platform says in its own voice, when the model failed
+ * and there is no reply to pass on. It has to be in the patient's language,
+ * so an outage does not also switch them into English.
+ */
+const TECHNICAL_TROUBLE: Record<string, string> = {
+  de: "Entschuldigung, gerade gibt es bei mir ein technisches Problem. Bitte versuchen Sie es gleich noch einmal.",
+  en: "Sorry, I am having a technical problem right now. Please try again in a moment.",
+  fr: "Désolée, j'ai un problème technique en ce moment. Réessayez dans un instant.",
+  es: "Lo siento, ahora mismo tengo un problema técnico. Inténtelo de nuevo en un momento.",
+  it: "Mi scusi, ho un problema tecnico in questo momento. Riprovi tra un attimo.",
+  pl: "Przepraszam, mam teraz problem techniczny. Proszę spróbować za chwilę.",
+  nl: "Sorry, ik heb nu een technisch probleem. Probeert u het zo nog eens.",
+  pt: "Desculpe, estou com um problema técnico. Tente novamente daqui a pouco.",
+};
+
+export function technicalTrouble(code: string | null | undefined) {
+  return TECHNICAL_TROUBLE[code ?? "de"] ?? TECHNICAL_TROUBLE.de;
+}

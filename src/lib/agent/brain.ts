@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
 import { buildSystemPrompt } from "@/lib/agent/prompt";
-import { languageLabel } from "@/lib/languages";
+import { languageLabel, technicalTrouble } from "@/lib/languages";
 import { AGENT_TOOLS, executeTool, type ToolContext } from "@/lib/agent/tools";
 import type { ChatCompletionMessageParam, ChatCompletionTool } from "openai/resources/chat/completions";
 
@@ -15,6 +15,8 @@ export type BrainReply = {
   reply: string;
   toolEvents: ToolEvent[];
   conversationStatus: string;
+  /** Language the conversation settled on, so the widget can follow it. */
+  language: string | null;
 };
 
 function openaiTools(): ChatCompletionTool[] {
@@ -33,7 +35,7 @@ function openaiTools(): ChatCompletionTool[] {
  * language it is locked to, and the patient facts already established so a
  * verified caller is never asked to identify themselves twice.
  */
-async function knownContext(conversationId: string) {
+async function knownContext(conversationId: string, primaryLanguage: string) {
   const conv = await db.conversation.findUnique({
     where: { id: conversationId },
     include: { patient: true },
@@ -49,7 +51,9 @@ async function knownContext(conversationId: string) {
   } else {
     lines.push(
       "## LANGUAGE NOT SET YET",
-      "Before you answer, call set_language with the language of the patient's message. Do it on this turn."
+      `Default to ${languageLabel(primaryLanguage)} (${primaryLanguage}) — that is this network's language and what the patient was greeted in.`,
+      "If the patient is clearly writing another language, use theirs instead.",
+      "Either way, call set_language once with the code you chose, on this turn."
     );
   }
 
@@ -88,7 +92,7 @@ export async function runAgentTurn(conversationId: string, userText: string): Pr
     take: 60,
   });
 
-  const known = await knownContext(conversationId);
+  const known = await knownContext(conversationId, agent.language);
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: await buildSystemPrompt("chat") },
     ...(known ? [{ role: "system" as const, content: known }] : []),
@@ -153,8 +157,8 @@ export async function runAgentTurn(conversationId: string, userText: string): Pr
   }
 
   if (!finalText) {
-    finalText =
-      "I'm sorry, something went wrong on my side. A staff member will follow up with you shortly.";
+    const conv = await db.conversation.findUnique({ where: { id: conversationId } });
+    finalText = technicalTrouble(conv?.language);
   }
 
   await db.message.create({
@@ -162,5 +166,5 @@ export async function runAgentTurn(conversationId: string, userText: string): Pr
   });
 
   const conv = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
-  return { reply: finalText, toolEvents, conversationStatus: conv.status };
+  return { reply: finalText, toolEvents, conversationStatus: conv.status, language: conv.language };
 }

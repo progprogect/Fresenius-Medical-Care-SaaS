@@ -63,8 +63,10 @@ const DEFAULTS: {
     voiceLlm: "gpt-5.1",
     voiceId: "eJRhExUeshH24BIBe89c", // Kate — natural, warm, professional
     elevenLabsAgentId: "",
+    // Written in the primary language: it is what a first-time visitor reads
+    // and hears before anyone has said a word, so it must not be English.
     firstMessage:
-      "Hello! I'm Nora, your clinic assistant. I can help you book, move or cancel an appointment. How can I help you today?",
+      "Hallo! Ich bin Nora, Ihre Assistentin von Fresenius Medical Care. Ich kann Ihnen helfen, einen Termin zu buchen, zu verschieben oder abzusagen. Wie kann ich Ihnen heute helfen?",
     firstMessageTranslations: {},
     translationsFor: "",
   } satisfies AgentSettings,

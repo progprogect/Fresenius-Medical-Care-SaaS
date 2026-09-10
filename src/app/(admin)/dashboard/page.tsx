@@ -109,7 +109,7 @@ export default async function DashboardPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="size-4 text-red-500" /> Escalations
+                <AlertTriangle className="size-4 text-amber-600" /> Escalations
               </CardTitle>
               <CardDescription>Conversations waiting for a human</CardDescription>
             </CardHeader>
@@ -126,7 +126,7 @@ export default async function DashboardPage() {
                     {c.assignedTo ? (
                       <span className="shrink-0 text-xs text-muted-foreground">{c.assignedTo.name}</span>
                     ) : (
-                      <span className="shrink-0 text-xs font-medium text-red-600">nobody yet</span>
+                      <span className="shrink-0 text-xs font-medium text-amber-700">nobody yet</span>
                     )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{c.escalationReason}</p>

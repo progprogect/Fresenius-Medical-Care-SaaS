@@ -33,16 +33,16 @@ export function EscalationQueue({
   const unclaimed = items.filter((i) => !i.assignedToId).length;
 
   return (
-    <Card className="mb-4 border-red-200 bg-red-50/40">
+    <Card className="mb-4 border-amber-200 bg-amber-50/40">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
-          <AlertTriangle className="size-4 text-red-500" />
+          <AlertTriangle className="size-4 text-amber-600" />
           Needs a human
-          <Badge variant="outline" className="border-red-200 bg-red-100 text-red-700">
+          <Badge variant="outline" className="border-amber-200 bg-amber-100 text-amber-800">
             {items.length}
           </Badge>
           {unclaimed > 0 && (
-            <span className="text-xs font-normal text-red-700">{unclaimed} nobody has taken</span>
+            <span className="text-xs font-normal text-amber-800">{unclaimed} nobody has taken</span>
           )}
         </CardTitle>
         <CardDescription>

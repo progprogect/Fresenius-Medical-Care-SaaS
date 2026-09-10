@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runAgentTurn } from "@/lib/agent/brain";
 import { getSettings } from "@/lib/settings";
+import { technicalTrouble } from "@/lib/languages";
 import {
   createWidgetConversation,
   expireStaleVerification,
@@ -40,10 +41,10 @@ export async function POST(req: Request) {
       {
         conversationId: conversation.id,
         clientToken: conversation.clientToken,
-        reply:
-          "I'm having technical trouble right now. Please try again in a moment or call the clinic directly.",
+        reply: technicalTrouble(conversation.language),
         toolEvents: [],
         conversationStatus: "ACTIVE",
+        language: conversation.language,
         error: true,
       },
       { status: 200 }
@@ -54,9 +55,13 @@ export async function POST(req: Request) {
 export async function GET() {
   const widget = await getSettings("widget");
   const agent = await getSettings("agent");
+  // Staff may write the greeting in any language; the visitor must read it in
+  // the network's own one, which is the translation the voice agent also opens with.
+  const greeting = agent.firstMessageTranslations?.[agent.language] ?? agent.firstMessage;
   return NextResponse.json({
     title: widget.title,
-    greeting: agent.firstMessage,
+    greeting,
+    language: agent.language,
     primaryColor: widget.primaryColor,
     allowVoice: widget.allowVoice,
     voiceReady: Boolean(agent.elevenLabsAgentId),

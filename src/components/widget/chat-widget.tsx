@@ -4,7 +4,7 @@ import * as React from "react";
 import { Mic, PhoneOff, Send, Stethoscope } from "lucide-react";
 import { ConversationProvider, useConversation } from "@elevenlabs/react";
 import { cn } from "@/lib/utils";
-import { normalizeLanguageTag } from "@/lib/languages";
+import { DEFAULT_WIDGET_LANGUAGE, widgetCopy } from "@/lib/widget-copy";
 
 type WidgetConfig = {
   title: string;
@@ -12,6 +12,8 @@ type WidgetConfig = {
   primaryColor: string;
   allowVoice: boolean;
   voiceReady: boolean;
+  /** Primary language of the network; what a visitor is greeted in. */
+  language: string;
 };
 
 type ChatMsg = {
@@ -27,17 +29,22 @@ type SlotCard = { slotRef: string; when: string; doctor: string; clinic: string 
 
 type ToolEvent = { name: string; args: unknown; result: unknown };
 
-const QUICK_REPLIES = [
-  "I'd like to book an appointment",
-  "I need to move or cancel my appointment",
-  "Which clinics do you have?",
-];
-
 let idCounter = 0;
 const nextId = () => `m${Date.now()}-${idCounter++}`;
 
 function ChatWidgetInner() {
   const [config, setConfig] = React.useState<WidgetConfig | null>(null);
+  // The widget speaks the network's language until the assistant reports the
+  // one the patient actually chose, then follows that.
+  const [language, setLanguage] = React.useState(DEFAULT_WIDGET_LANGUAGE);
+  // Callbacks handed to the voice SDK close over the first render, so they
+  // read the language from a ref rather than from stale state.
+  const languageRef = React.useRef(DEFAULT_WIDGET_LANGUAGE);
+  const applyLanguage = React.useCallback((code: string | null | undefined) => {
+    if (!code) return;
+    languageRef.current = code;
+    setLanguage(code);
+  }, []);
   const [messages, setMessages] = React.useState<ChatMsg[]>([]);
   const [slots, setSlots] = React.useState<SlotCard[]>([]);
   const [input, setInput] = React.useState("");
@@ -114,7 +121,7 @@ function ChatWidgetInner() {
       setVoiceOpen(false);
       setMessages((prev) => [
         ...prev,
-        { id: nextId(), role: "assistant", text: "Voice call ended due to a connection problem." },
+        { id: nextId(), role: "assistant", text: widgetCopy(languageRef.current).voiceDropped },
       ]);
     },
   });
@@ -124,10 +131,11 @@ function ChatWidgetInner() {
       .then((r) => r.json())
       .then((cfg: WidgetConfig) => {
         setConfig(cfg);
+        applyLanguage(cfg.language);
         setMessages([{ id: nextId(), role: "assistant", text: cfg.greeting, seeded: true }]);
       })
       .catch(() => {});
-  }, []);
+  }, [applyLanguage]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -148,7 +156,7 @@ function ChatWidgetInner() {
       } catch {
         setMessages((prev) => [
           ...prev,
-          { id: nextId(), role: "assistant", text: "That did not reach the call — please say it instead." },
+          { id: nextId(), role: "assistant", text: widgetCopy(languageRef.current).notDelivered },
         ]);
       }
       return;
@@ -166,6 +174,7 @@ function ChatWidgetInner() {
       });
       const data = await res.json();
       if (data.conversationId) rememberConversation(data.conversationId, data.clientToken);
+      applyLanguage(data.language);
       setMessages((prev) => [
         ...prev.map((m) => (m.seeded ? { ...m, seeded: false } : m)),
         { id: nextId(), role: "assistant", text: data.reply },
@@ -195,18 +204,14 @@ function ChatWidgetInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       if (data.conversationId) rememberConversation(data.conversationId, data.clientToken);
-      // Open the call in the visitor's own language when we support it, so the
-      // greeting already matches; the agent still switches if they speak another.
-      const browserLanguage = normalizeLanguageTag(navigator.language);
-      const supported: string[] = data.languages ?? [];
-      const startLanguage =
-        browserLanguage && supported.includes(browserLanguage) ? browserLanguage : undefined;
-
+      // The call opens in the network's own language. Following the visitor's
+      // browser locale instead meant an English browser started an English
+      // call in a German clinic; the agent detects and switches on its own the
+      // moment the caller speaks something else.
       setVoiceOpen(true);
       conversation.startSession({
         signedUrl: data.signedUrl,
         dynamicVariables: data.dynamicVariables,
-        ...(startLanguage ? { overrides: { agent: { language: startLanguage } } } : {}),
       });
     } catch {
       setVoiceOpen(false);
@@ -215,7 +220,7 @@ function ChatWidgetInner() {
         {
           id: nextId(),
           role: "assistant",
-          text: "Voice is not available right now. Please continue in chat.",
+          text: widgetCopy(languageRef.current).voiceUnavailable,
         },
       ]);
     }
@@ -228,6 +233,7 @@ function ChatWidgetInner() {
     setVoiceOpen(false);
   }
 
+  const t = widgetCopy(language);
   const color = config?.primaryColor ?? "#0d9488";
   const showQuick = messages.filter((m) => m.role === "user").length === 0;
 
@@ -246,9 +252,9 @@ function ChatWidgetInner() {
             <div className="text-[11px] opacity-85">
               {voiceOpen
                 ? conversation.isSpeaking
-                  ? "Speaking..."
-                  : "Listening..."
-                : "AI assistant · online"}
+                  ? t.speaking
+                  : t.listening
+                : t.subtitle}
             </div>
           </div>
         </div>
@@ -258,14 +264,14 @@ function ChatWidgetInner() {
               onClick={stopVoice}
               className="flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium hover:bg-white/30"
             >
-              <PhoneOff className="size-3.5" /> End call
+              <PhoneOff className="size-3.5" /> {t.endCall}
             </button>
           ) : (
             <button
               onClick={startVoice}
               className="flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium hover:bg-white/30"
             >
-              <Mic className="size-3.5" /> Voice call
+              <Mic className="size-3.5" /> {t.voiceCall}
             </button>
           )
         )}
@@ -282,7 +288,7 @@ function ChatWidgetInner() {
               style={m.role === "user" ? { background: color } : undefined}
             >
               {m.kind === "voice" && (
-                <span className="mb-0.5 block text-[10px] uppercase tracking-wide opacity-60">voice</span>
+                <span className="mb-0.5 block text-[10px] uppercase tracking-wide opacity-60">{t.voiceTag}</span>
               )}
               {m.text}
             </div>
@@ -294,7 +300,7 @@ function ChatWidgetInner() {
             {slots.map((s) => (
               <button
                 key={s.slotRef}
-                onClick={() => send(`I'll take the slot on ${s.when} with ${s.doctor}.`)}
+                onClick={() => send(t.takeSlot(s.when, s.doctor))}
                 className="block w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors hover:bg-neutral-50"
                 style={{ borderColor: `${color}55` }}
               >
@@ -321,7 +327,7 @@ function ChatWidgetInner() {
 
         {showQuick && !busy && (
           <div className="flex flex-wrap gap-1.5 pt-1">
-            {QUICK_REPLIES.map((q) => (
+            {t.quickReplies.map((q) => (
               <button
                 key={q}
                 onClick={() => send(q)}
@@ -345,7 +351,7 @@ function ChatWidgetInner() {
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
+          placeholder={t.placeholder}
           className="h-10 flex-1 rounded-full border border-neutral-200 bg-neutral-50 px-4 text-sm outline-none focus:border-neutral-400"
         />
         <button
@@ -353,14 +359,12 @@ function ChatWidgetInner() {
           disabled={!input.trim() || busy}
           className="flex size-10 shrink-0 items-center justify-center rounded-full text-white disabled:opacity-40"
           style={{ background: color }}
-          aria-label="Send"
+          aria-label={t.send}
         >
           <Send className="size-4" />
         </button>
       </form>
-      <div className="pb-2 text-center text-[10px] text-neutral-400">
-        AI assistant — no medical advice. Emergencies: call 112.
-      </div>
+      <div className="pb-2 text-center text-[10px] text-neutral-400">{t.disclaimer}</div>
     </div>
   );
 }
