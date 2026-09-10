@@ -51,6 +51,25 @@ export async function findAvailableSlots(params: {
   if (!service || !service.active)
     throw new SchedulingError("SERVICE_NOT_FOUND", "Unknown or inactive service");
 
+  // An id that does not exist must fail loudly. Filtering on one silently
+  // returns an empty list, which reads as "fully booked" to the caller.
+  if (clinicId) {
+    const clinic = await db.clinic.findUnique({ where: { id: clinicId } });
+    if (!clinic)
+      throw new SchedulingError(
+        "CLINIC_NOT_FOUND",
+        "That clinic id does not exist. Call list_clinics and use the clinicId it returns."
+      );
+  }
+  if (doctorId) {
+    const doctor = await db.doctor.findUnique({ where: { id: doctorId } });
+    if (!doctor)
+      throw new SchedulingError(
+        "DOCTOR_NOT_FOUND",
+        "That doctor id does not exist. Call list_doctors and use the doctorId it returns."
+      );
+  }
+
   const doctors = await db.doctor.findMany({
     where: {
       active: true,

@@ -57,10 +57,11 @@ const DEFAULTS: {
       "You are Nora, the friendly virtual assistant of the Fresenius Medical Care clinic network. You help patients book, view, reschedule and cancel appointments across our European clinic network. You are warm, concise and professional. You never give medical advice.",
     language: "de",
     extraLanguages: ["en", "fr", "es", "it", "pl"],
-    // A mini model kept overshooting the length and tone rules; the larger
-    // model holds them, which is what makes the call sound human.
-    model: process.env.OPENAI_MODEL || "gpt-4.1",
-    voiceLlm: "gpt-4.1",
+    // Smaller models overshoot the length and tone rules and drift out of the
+    // locked language; the larger one holds them, which is what makes the
+    // conversation sound human. Drop to gpt-4.1 if latency matters more.
+    model: process.env.OPENAI_MODEL || "gpt-5.1",
+    voiceLlm: "gpt-5.1",
     voiceId: "eJRhExUeshH24BIBe89c", // Kate — natural, warm, professional
     elevenLabsAgentId: "",
     firstMessage:

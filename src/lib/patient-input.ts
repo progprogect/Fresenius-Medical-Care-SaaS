@@ -13,12 +13,34 @@ const DIGIT_WORDS: Record<string, string> = {
   six: "6", seven: "7", eight: "8", nine: "9",
 };
 
-const MONTHS: Record<string, number> = {
-  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3,
-  apr: 4, april: 4, may: 5, jun: 6, june: 6, jul: 7, july: 7,
-  aug: 8, august: 8, sep: 9, sept: 9, september: 9,
-  oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+/**
+ * Month names in every language the assistant speaks. A German caller says
+ * "25. Januar 1989", and an English-only table silently rejects it, which
+ * looked to the patient like the clinic could not find them.
+ */
+const MONTH_NAMES: Record<number, string[]> = {
+  1: ["jan", "january", "januar", "janvier", "enero", "gennaio", "styczen", "stycznia", "januari", "janeiro"],
+  2: ["feb", "february", "februar", "fevrier", "febrero", "febbraio", "luty", "lutego", "februari", "fevereiro"],
+  3: ["mar", "march", "marz", "maerz", "mars", "marzo", "marzec", "marca", "maart", "marco"],
+  4: ["apr", "april", "avril", "abril", "aprile", "kwiecien", "kwietnia"],
+  5: ["may", "mai", "mayo", "maggio", "maj", "maja", "mei", "maio"],
+  6: ["jun", "june", "juni", "juin", "junio", "giugno", "czerwiec", "czerwca", "junho"],
+  7: ["jul", "july", "juli", "juillet", "julio", "luglio", "lipiec", "lipca", "julho"],
+  8: ["aug", "august", "aout", "agosto", "sierpien", "sierpnia", "augustus"],
+  9: ["sep", "sept", "september", "septembre", "septiembre", "settembre", "wrzesien", "wrzesnia", "setembro"],
+  10: ["oct", "october", "oktober", "octobre", "octubre", "ottobre", "pazdziernik", "pazdziernika", "outubro"],
+  11: ["nov", "november", "novembre", "noviembre", "listopad", "listopada", "novembro"],
+  12: ["dec", "december", "dezember", "decembre", "diciembre", "dicembre", "grudzien", "grudnia", "dezembro"],
 };
+
+const MONTHS: Record<string, number> = Object.fromEntries(
+  Object.entries(MONTH_NAMES).flatMap(([num, names]) =>
+    names.map((name) => [name, Number(num)])
+  )
+);
+
+/** Words that sit between the parts of a spoken date and carry no meaning. */
+const DATE_FILLERS = new Set(["of", "de", "del", "der", "den", "the", "am", "im", "el", "il", "roku", "r"]);
 
 /** Turns spoken number words into digits: "plus four nine, double one" -> "+4911". */
 function spokenToDigits(raw: string) {
@@ -165,12 +187,17 @@ export function parseDateOfBirth(raw: string): DateParse {
     return { candidates: [...found], ambiguous };
   }
 
-  // 12 April 1985 / April 12, 1985 / 12th of Apr 1985
-  const words = input.replace(/(\d+)(st|nd|rd|th)\b/g, "$1").replace(/\bof\b/g, " ");
+  // 12 April 1985 / April 12, 1985 / 25. Januar 1989 / 25 de enero de 1989
+  const words = input
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ß/g, "ss")
+    .replace(/(\d+)(st|nd|rd|th|er|ere|eme|º|ª)\b/g, "$1");
   const tokens = words.split(/[\s,.\-/]+/).filter(Boolean);
   let month: number | undefined;
   const numbers: number[] = [];
   for (const token of tokens) {
+    if (DATE_FILLERS.has(token)) continue;
     if (MONTHS[token] !== undefined) {
       month = MONTHS[token];
       continue;
@@ -186,4 +213,90 @@ export function parseDateOfBirth(raw: string): DateParse {
   }
 
   return { candidates: [...found], ambiguous };
+}
+
+/** Strips case, accents and punctuation so "Müller-Schmidt" matches "muller schmidt". */
+export function normalizeName(raw: string) {
+  return String(raw ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshtein(a: string, b: string) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row[j] = Math.min(
+        prev[j] + 1,
+        row[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** 0…1 similarity between two names, 1 being identical once normalised. */
+export function nameSimilarity(a: string, b: string) {
+  const x = normalizeName(a);
+  const y = normalizeName(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  const longest = Math.max(x.length, y.length);
+  return Math.max(0, 1 - levenshtein(x, y) / longest);
+}
+
+/**
+ * How well a spoken name matches a stored one. Speech recognition mangles
+ * spelling and callers sometimes give the names the other way round, so both
+ * orderings are scored and the better one wins.
+ */
+export function fullNameSimilarity(
+  said: { firstName: string; lastName: string },
+  stored: { firstName: string; lastName: string }
+) {
+  const straight =
+    (nameSimilarity(said.firstName, stored.firstName) +
+      nameSimilarity(said.lastName, stored.lastName)) /
+    2;
+  const swapped =
+    (nameSimilarity(said.firstName, stored.lastName) +
+      nameSimilarity(said.lastName, stored.firstName)) /
+    2;
+  return Math.max(straight, swapped);
+}
+
+/**
+ * Words a caller never actually gives as their name. Speech agents reach for
+ * them when the patient stayed silent, which is how a record called
+ * "Unbekannt Unbekannt" ends up in the registry with no appointments.
+ */
+const PLACEHOLDER_NAMES = new Set([
+  "unknown", "unbekannt", "inconnu", "desconocido", "sconosciuto", "nieznany",
+  "onbekend", "desconhecido", "anonymous", "anonym", "anonimo", "nn", "na",
+  "none", "null", "nobody", "patient", "caller", "test", "testtest", "xxx",
+  "firstname", "lastname", "vorname", "nachname", "name",
+]);
+
+/** Rejects blank, one-letter and placeholder names before they reach a record. */
+export function isRealName(raw: string) {
+  const value = normalizeName(raw);
+  if (value.length < 2) return false;
+  if (!/[a-z]/.test(value)) return false;
+  // "N/A" normalises to "n a"; judge the parts and the whole.
+  if (PLACEHOLDER_NAMES.has(value.replace(/\s/g, ""))) return false;
+  const parts = value.split(" ");
+  // A single letter is fine inside a name (O'Brien, an initial) but a name
+  // made only of single letters is not a name.
+  if (!parts.some((part) => part.length >= 2)) return false;
+  return parts.every((part) => part.length < 2 || !PLACEHOLDER_NAMES.has(part));
 }

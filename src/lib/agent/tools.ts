@@ -10,7 +10,7 @@ import {
 } from "@/lib/scheduling";
 import { createOffersForFreedSlot } from "@/lib/backfill";
 import { fmtClinic } from "@/lib/format";
-import { parseDateOfBirth, parsePhone } from "@/lib/patient-input";
+import { fullNameSimilarity, isRealName, parseDateOfBirth, parsePhone } from "@/lib/patient-input";
 import { continueInLanguage, isSupportedLanguage, languageLabel, SUPPORTED_LANGUAGES } from "@/lib/languages";
 import { formatInTimeZone } from "date-fns-tz";
 
@@ -159,23 +159,43 @@ const listDoctors: ToolDef = {
   },
 };
 
+/** Below this, a spoken name is too far from the record to even read back. */
+const NAME_CONFIRM_FLOOR = 0.7;
+
 const verifyPatient: ToolDef = {
   name: "verify_patient",
   description:
-    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Needs ONLY the phone number and the date of birth — never ask the patient for their name to verify them, the record already holds it. Pass both values EXACTLY as the patient gave them — any spelling or ordering is understood, so never ask them to repeat it in a particular format. On success the session becomes verified.",
+    "REQUIRED before disclosing appointments or making changes for an existing patient. The date of birth is always needed, plus ONE of: the phone number, or the first and last name. Ask for it as a choice — \"your phone number, or your name and date of birth\" — and pass whatever they give, exactly as they said it; any spelling, ordering or date format is understood. If the tool answers needsConfirmation, read the name and date back and call it again with confirmed: true once the patient says yes.",
   schema: z.object({
-    phone: z
-      .string()
-      .describe("Phone as the patient gave it; country code optional, spaces and dashes fine"),
     dateOfBirth: z
       .string()
       .describe("Date of birth as the patient gave it, e.g. '12.04.1985', '12 April 1985' or '1985-04-12'"),
+    phone: z
+      .string()
+      .optional()
+      .describe("Phone as the patient gave it; country code optional, spaces and dashes fine"),
+    firstName: z.string().optional().describe("Given name, as heard"),
+    lastName: z.string().optional().describe("Family name, as heard"),
+    confirmed: z
+      .boolean()
+      .optional()
+      .describe("Only true after the patient confirmed a name you read back to them"),
   }),
   execute: async (args, ctx) => {
-    const phone = parsePhone(String(args.phone));
+    const rawPhone = args.phone ? String(args.phone).trim() : "";
+    const firstName = args.firstName ? String(args.firstName).trim() : "";
+    const lastName = args.lastName ? String(args.lastName).trim() : "";
+    const phone = rawPhone ? parsePhone(rawPhone) : null;
     const dob = parseDateOfBirth(String(args.dateOfBirth));
+    const hasName = Boolean(firstName && lastName);
 
-    if (!phone.suffix)
+    if (!phone?.suffix && !hasName)
+      return {
+        verified: false,
+        error: "NEED_AN_IDENTIFIER",
+        hint: "Ask for either the phone number, or the first and last name — whichever the patient finds easier — along with the date of birth.",
+      };
+    if (rawPhone && !phone?.suffix && !hasName)
       return {
         verified: false,
         error: "PHONE_UNCLEAR",
@@ -188,17 +208,73 @@ const verifyPatient: ToolDef = {
         hint: "The date of birth did not come through. Read back the date you think you heard, with the month spelled out, and ask them to confirm with a simple yes.",
       };
 
-    // Match on the trailing digits so the country code and a national trunk
-    // zero are both optional for the caller.
-    const byPhone = await db.patient.findMany({
-      where: { phone: { endsWith: phone.suffix } },
-      take: 5,
-    });
-    const matches = byPhone.filter(
-      (p) =>
-        p.dateOfBirth &&
-        dob.candidates.includes(formatInTimeZone(p.dateOfBirth, "UTC", "yyyy-MM-dd"))
-    );
+    // The date of birth is the strong factor either way; the phone or the name
+    // then has to agree with it.
+    const sameDob = (p: { dateOfBirth: Date | null }) =>
+      p.dateOfBirth && dob.candidates.includes(formatInTimeZone(p.dateOfBirth, "UTC", "yyyy-MM-dd"));
+
+    let matches: Awaited<ReturnType<typeof db.patient.findMany>> = [];
+    let identifiedBy: "phone" | "name" = "phone";
+
+    if (phone?.suffix) {
+      // Match on the trailing digits so the country code and a national trunk
+      // zero are both optional for the caller.
+      const byPhone = await db.patient.findMany({
+        where: { phone: { endsWith: phone.suffix } },
+        take: 5,
+      });
+      matches = byPhone.filter(sameDob);
+    }
+
+    if (matches.length === 0 && hasName) {
+      identifiedBy = "name";
+      const born = await db.patient.findMany({
+        where: {
+          dateOfBirth: {
+            in: dob.candidates.map((d) => new Date(`${d}T00:00:00Z`)),
+          },
+        },
+        take: 50,
+      });
+      const scored = born
+        .map((p) => ({ patient: p, score: fullNameSimilarity({ firstName, lastName }, p) }))
+        .filter((c) => c.score >= NAME_CONFIRM_FLOOR)
+        .sort((a, b) => b.score - a.score);
+
+      if (scored.length > 1 && scored[1].score >= scored[0].score - 0.05) {
+        await logAudit({
+          actor: actorFor(ctx),
+          action: "VERIFY_AMBIGUOUS",
+          entity: "Conversation",
+          entityId: ctx.conversationId,
+          details: { firstName, lastName },
+        });
+        return {
+          verified: false,
+          error: "SEVERAL_MATCHES",
+          hint: "Two records fit that name and date of birth. Ask for the phone number instead, so the right person is certain.",
+        };
+      }
+
+      const best = scored[0];
+      if (best && best.score < 1 && !args.confirmed) {
+        // Close but not exact: let the patient confirm the spelling rather
+        // than risk opening someone else's record.
+        return {
+          verified: false,
+          needsConfirmation: true,
+          readBack: {
+            name: `${best.patient.firstName} ${best.patient.lastName}`,
+            dateOfBirth: spellDate(
+              formatInTimeZone(best.patient.dateOfBirth!, "UTC", "yyyy-MM-dd")
+            ),
+          },
+          hint: `Ask exactly this and nothing more: "Habe ich das richtig - ${best.patient.firstName} ${best.patient.lastName}, geboren am ..." in the conversation's language, using the values in readBack. If the patient says yes, call verify_patient again with the same details and confirmed: true. If they say no, ask them to spell the surname.`,
+        };
+      }
+      matches = best ? [best.patient] : [];
+    }
+
     const patient = matches.length === 1 ? matches[0] : null;
 
     if (!patient) {
@@ -207,18 +283,19 @@ const verifyPatient: ToolDef = {
         action: "VERIFY_FAILED",
         entity: "Conversation",
         entityId: ctx.conversationId,
-        details: { suffix: phone.suffix, ambiguous: matches.length > 1 },
+        details: { by: identifiedBy, ambiguous: matches.length > 1 },
       });
       return {
         verified: false,
         understood: {
-          phone: spellPhone(phone.digits),
+          ...(phone?.digits ? { phone: spellPhone(phone.digits) } : {}),
+          ...(hasName ? { name: `${firstName} ${lastName}` } : {}),
           dateOfBirth: dob.candidates.map(spellDate).join(" or "),
         },
         hint:
           matches.length > 1
             ? "More than one record matches. Escalate to a human rather than guessing."
-            : "No match — every reading of that date was already tried, so asking for another format will not help. Read the values in `understood` back to the patient and ask them to confirm or correct just the wrong one. If both are right, offer to register them as a new patient or escalate to a human.",
+            : "No match — every reading of that date was already tried, so asking for another format will not help. Read the values in `understood` back and ask the patient to correct just the wrong one, or offer the other identifier: if they gave a name, ask for the phone number, and the other way round. If everything is right, they are probably a new patient — offer to register them.",
       };
     }
     await db.conversation.update({
@@ -230,7 +307,7 @@ const verifyPatient: ToolDef = {
       action: "VERIFY_OK",
       entity: "Patient",
       entityId: patient.id,
-      details: { conversationId: ctx.conversationId },
+      details: { conversationId: ctx.conversationId, identifiedBy },
     });
     return {
       verified: true,
@@ -252,6 +329,17 @@ const registerPatient: ToolDef = {
     dateOfBirth: z.string().describe("Date of birth as the patient gave it, in any common wording"),
   }),
   execute: async (args, ctx) => {
+    const firstName = String(args.firstName ?? "").trim();
+    const lastName = String(args.lastName ?? "").trim();
+    // A record is only worth creating if the patient actually gave a name.
+    // Placeholders leave an untraceable entry that then looks like a patient
+    // with no appointments.
+    if (!isRealName(firstName) || !isRealName(lastName))
+      return {
+        error: "NAME_MISSING",
+        hint: "You do not have a usable name. Never invent one and never use a placeholder like 'unknown'. Ask the patient for their first and last name, and if they will not give one, escalate to a human instead of creating a record.",
+      };
+
     const parsedPhone = parsePhone(String(args.phone));
     const parsedDob = parseDateOfBirth(String(args.dateOfBirth));
 
@@ -289,12 +377,7 @@ const registerPatient: ToolDef = {
       };
     const dob = new Date(`${parsedDob.candidates[0]}T00:00:00Z`);
     const patient = await db.patient.create({
-      data: {
-        firstName: String(args.firstName),
-        lastName: String(args.lastName),
-        phone,
-        dateOfBirth: dob,
-      },
+      data: { firstName, lastName, phone, dateOfBirth: dob },
     });
     await db.conversation.update({
       where: { id: ctx.conversationId },
@@ -332,6 +415,10 @@ const getMyAppointments: ToolDef = {
       when: fmtClinic(a.startsAt, a.clinic.timezone),
       startsAtIso: a.startsAt.toISOString(),
       status: a.status,
+      // Real ids so a reschedule can search slots without inventing them.
+      serviceId: a.serviceId,
+      clinicId: a.clinicId,
+      doctorId: a.doctorId,
     }));
     if (appointments.length <= 1) return appointments;
     // Several upcoming visits: name the soonest rather than reading the list out.
@@ -394,12 +481,40 @@ const findSlots: ToolDef = {
       clinic: `${s.clinicName}, ${s.clinicCity}`,
     }));
     if (results.length === 0) {
+      // Never hand the patient a dead end. Widen the search ourselves so the
+      // agent always has something concrete to offer: same clinic over the
+      // next few weeks first, then the rest of the network.
+      const wider = await findAvailableSlots({
+        serviceId: String(args.serviceId),
+        clinicId: args.clinicId ? String(args.clinicId) : undefined,
+        days: 21,
+        limit: 40,
+      });
+      const elsewhere =
+        wider.length === 0
+          ? await findAvailableSlots({ serviceId: String(args.serviceId), days: 21, limit: 40 })
+          : [];
+      const fallback = (wider.length > 0 ? wider : elsewhere).slice(0, 3).map((s) => ({
+        slotRef: slotRef(s.doctorId, s.startsAt),
+        when: fmtClinic(s.startsAt, s.timezone),
+        startsAtIso: s.startsAt.toISOString(),
+        doctor: s.doctorName,
+        clinic: `${s.clinicName}, ${s.clinicCity}`,
+      }));
+
+      if (fallback.length === 0)
+        return {
+          slots: [],
+          alternatives: [],
+          hint: "Nothing is free for this service anywhere in the next three weeks. Say so plainly and offer to have a colleague call them back with a date.",
+        };
+
       return {
         slots: [],
         searchedDay: exactDay ?? null,
-        hint: exactDay
-          ? `Nothing free on ${exactDay}. Tell the patient that exact day is fully booked and offer to look at nearby days (call find_slots again with fromDate).`
-          : "No free slots in the searched range. Offer a later date range or another clinic.",
+        alternatives: fallback,
+        alternativesAt: wider.length > 0 ? "same clinic" : "another clinic",
+        hint: `That request has nothing free, but these do. Do NOT offer to hand over to a person and do NOT end the search — say the requested time is taken and offer the nearest alternative in one sentence${wider.length > 0 ? "" : ", mentioning it is at a different clinic"}. Book from the alternatives exactly as you would from a normal slot list.`,
       };
     }
     return results;

@@ -16,6 +16,14 @@ See README.md and docs/ARCHITECTURE.md first.
 - Scheduling changes go ONLY through `src/lib/scheduling.ts`; agent capabilities ONLY through the
   tool registry `src/lib/agent/tools.ts` (shared by chat and voice — never fork the logic).
 - Appointments use optimistic locking (`version`); pass and check it on every mutation.
+- Identity: `verify_patient` takes the date of birth plus EITHER the phone number OR first and
+  last name. Name matching is fuzzy (`fullNameSimilarity`, floor 0.7, both name orders tried); a
+  non-exact match returns `needsConfirmation` so the agent reads the record back and re-calls with
+  `confirmed: true`. Two equally close records ask for the phone instead. `isRealName` blocks
+  placeholder names so a failed verification can never quietly create a patient.
+- Date parsing understands month names in every supported language, not just English.
+- `find_slots` never dead-ends: when the exact request has nothing it returns `alternatives` from
+  a wider search, and the prompt forbids escalating to a human just because a diary is full.
 - The agent must never ask a patient for an email address (unreliable over voice) and never ask
   for their city or country, never dictate an input format, and never re-ask for something the
   patient already said. Phone numbers and dates of birth are parsed tolerantly in
