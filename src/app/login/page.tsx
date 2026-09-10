@@ -79,8 +79,8 @@ export default function LoginPage() {
           <div className="mx-auto mb-2 flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <Stethoscope className="size-5" />
           </div>
-          <CardTitle className="text-xl">Clinic SaaS</CardTitle>
-          <CardDescription>AI voice call center for your clinic network</CardDescription>
+          <CardTitle className="text-xl">Fresenius Medical Care</CardTitle>
+          <CardDescription>AI voice call center — European clinic network</CardDescription>
         </CardHeader>
         <CardContent>
           <React.Suspense>

@@ -171,7 +171,7 @@ function ChatWidgetInner() {
             <Stethoscope className="size-4.5" />
           </div>
           <div className="leading-tight">
-            <div className="text-sm font-semibold">{config?.title ?? "Clinic Assistant"}</div>
+            <div className="text-sm font-semibold">{config?.title ?? "Fresenius Medical Care"}</div>
             <div className="text-[11px] opacity-85">
               {voiceOpen
                 ? conversation.isSpeaking

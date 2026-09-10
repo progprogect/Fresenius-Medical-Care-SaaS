@@ -71,7 +71,7 @@ const PHONE_PREFIX = ["+4915", "+4916", "+3361", "+3467", "+3933", "+4869"];
 
 function pad(n: number, len = 7) { return String(n).padStart(len, "0"); }
 
-async function main() {
+export async function seed() {
   console.log("Seeding...");
   await db.$transaction([
     db.message.deleteMany(), db.conversation.deleteMany(), db.slotOffer.deleteMany(),
@@ -220,9 +220,13 @@ async function main() {
   console.log(`Seeded: ${clinics.length} clinics, ${doctors.length} doctors, ${SERVICES.length} services, ${patients.length} patients, ${apptCount + 2} appointments.`);
 }
 
-main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(() => db.$disconnect());
+const invokedDirectly = process.argv[1]?.includes("seed");
+
+if (invokedDirectly) {
+  seed()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(() => db.$disconnect());
+}

@@ -112,7 +112,7 @@ export async function syncElevenLabsAgent() {
   const prompt = await buildSystemPrompt("voice");
 
   const body = {
-    name: `Clinic Assistant (${agent.displayName})`,
+    name: `Fresenius Medical Care Assistant (${agent.displayName})`,
     conversation_config: {
       agent: {
         first_message: agent.firstMessage,

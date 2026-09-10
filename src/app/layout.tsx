@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Clinic SaaS",
-  description: "Clinic management platform",
+  title: "Fresenius Medical Care",
+  description: "AI voice call center for the Fresenius Medical Care clinic network",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

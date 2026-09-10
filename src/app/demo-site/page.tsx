@@ -3,13 +3,13 @@ import Script from "next/script";
 import { HeartPulse, MapPin, ShieldCheck, Clock } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Riverside Nephrology — Demo Website",
-  description: "Sample clinic website demonstrating the embedded AI assistant widget",
+  title: "Fresenius Medical Care — Demo Website",
+  description: "Sample Fresenius Medical Care website demonstrating the embedded AI assistant widget",
 };
 
 /**
- * A fictional clinic website used to demonstrate how the widget embeds into a
- * customer's site with a single script tag.
+ * A sample Fresenius Medical Care website used to demonstrate how the widget
+ * embeds into the customer's site with a single script tag.
  */
 export default function DemoSitePage() {
   return (
@@ -18,7 +18,7 @@ export default function DemoSitePage() {
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-6">
           <div className="flex items-center gap-2 font-semibold">
             <HeartPulse className="size-5 text-teal-600" />
-            Riverside Nephrology
+            Fresenius Medical Care
           </div>
           <nav className="hidden gap-6 text-sm text-neutral-600 sm:flex">
             <span>Treatments</span>
@@ -62,7 +62,7 @@ export default function DemoSitePage() {
       </section>
 
       <footer className="border-t py-8 text-center text-xs text-neutral-400">
-        Fictional clinic site for demonstration purposes. The widget is embedded with one script tag.
+        Demo website for the Fresenius Medical Care AI assistant pilot. The widget is embedded with one script tag.
       </footer>
 
       <Script src="/embed.js" strategy="afterInteractive" />

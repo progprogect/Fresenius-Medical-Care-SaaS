@@ -1,6 +1,6 @@
-# Clinic SaaS — AI Voice Call Center
+# Fresenius Medical Care — AI Voice Call Center
 
-AI call center for a European clinic network: patients book/reschedule/cancel appointments via
+AI call center for the Fresenius Medical Care European clinic network: patients book/reschedule/cancel appointments via
 chat widget, ElevenLabs voice, or Twilio WhatsApp; staff run a desktop-first admin panel.
 See README.md and docs/ARCHITECTURE.md first.
 

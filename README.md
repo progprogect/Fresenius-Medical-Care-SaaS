@@ -1,6 +1,6 @@
-# Clinic SaaS — AI Voice Call Center
+# Fresenius Medical Care — AI Voice Call Center
 
-An AI-powered call center for a European clinic network (dialysis / nephrology flavored demo).
+An AI-powered call center for the Fresenius Medical Care European clinic network (dialysis / nephrology).
 Patients book, view, reschedule and cancel appointments by **website chat widget, voice call
 (ElevenLabs), or WhatsApp (Twilio)**. Staff manage everything in a desktop-first admin panel.
 The system is fully self-contained (own scheduling core) and designed so an external EMR can be

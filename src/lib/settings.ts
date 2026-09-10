@@ -44,7 +44,7 @@ const DEFAULTS: {
   agent: {
     displayName: "Nora",
     persona:
-      "You are Nora, the friendly virtual assistant of Fresenius Medical Care clinics. You help patients book, view, reschedule and cancel appointments across our European clinic network. You are warm, concise and professional. You never give medical advice.",
+      "You are Nora, the friendly virtual assistant of the Fresenius Medical Care clinic network. You help patients book, view, reschedule and cancel appointments across our European clinic network. You are warm, concise and professional. You never give medical advice.",
     language: "en",
     extraLanguages: ["de", "fr", "es", "it", "pl"],
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
@@ -72,7 +72,7 @@ const DEFAULTS: {
     primaryColor: "#0d9488",
     position: "bottom-right",
     allowVoice: true,
-    title: "Clinic Assistant",
+    title: "Fresenius Medical Care",
   } satisfies WidgetSettings,
 };
 

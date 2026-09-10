@@ -58,8 +58,7 @@ export function AdminSidebar({ role }: { role: string }) {
           <Stethoscope className="size-4" />
         </div>
         <div className="leading-tight">
-          <div className="text-sm font-semibold">Clinic SaaS</div>
-          <div className="text-[11px] text-muted-foreground">AI call center</div>
+          <div className="text-sm font-semibold leading-4">Fresenius<br />Medical Care</div>
         </div>
       </div>
       <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
