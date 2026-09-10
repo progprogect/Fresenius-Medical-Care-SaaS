@@ -21,6 +21,9 @@ See README.md and docs/ARCHITECTURE.md first.
 - Relative dates are resolved from the CALENDAR block that `buildSystemPrompt` injects, never by
   model arithmetic; a named day goes to `find_slots` as `onDate`.
 - List pages filter through the shared URL-driven `FilterBar`; filters live in the query string.
+  Give each filter a short `label` (used on the active-filter chip), mark only the two or three
+  most-used ones `primary: true` (they stay on the toolbar, the rest fold into the Filters
+  popover), and use `kind: "sort"` for ordering so it renders apart and never counts as a filter.
 - Money is EUR cents; times are stored UTC and rendered in each clinic's timezone.
 
 ## Commands
