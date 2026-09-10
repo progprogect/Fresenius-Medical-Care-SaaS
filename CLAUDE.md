@@ -17,7 +17,13 @@ See README.md and docs/ARCHITECTURE.md first.
   tool registry `src/lib/agent/tools.ts` (shared by chat and voice — never fork the logic).
 - Appointments use optimistic locking (`version`); pass and check it on every mutation.
 - The agent must never ask a patient for an email address (unreliable over voice) and never ask
-  for their city or country.
+  for their city or country, never dictate an input format, and never re-ask for something the
+  patient already said. Phone numbers and dates of birth are parsed tolerantly in
+  `src/lib/patient-input.ts`; when a value is unclear the agent reads back its understanding for
+  a yes/no instead of asking for a repeat.
+- The ElevenLabs agent stores a SNAPSHOT of the system prompt, so anything time-dependent must be
+  a dynamic variable: the calendar goes in as `{{today_calendar}}` and the widget supplies it at
+  session start. Re-sync the voice agent after every prompt change.
 - Relative dates are resolved from the CALENDAR block that `buildSystemPrompt` injects, never by
   model arithmetic; a named day goes to `find_slots` as `onDate`.
 - List pages filter through the shared URL-driven `FilterBar`; filters live in the query string.

@@ -136,7 +136,10 @@ function ChatWidgetInner() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setVoiceOpen(true);
-      conversation.startSession({ signedUrl: data.signedUrl });
+      conversation.startSession({
+        signedUrl: data.signedUrl,
+        dynamicVariables: data.dynamicVariables,
+      });
     } catch {
       setVoiceOpen(false);
       setMessages((prev) => [

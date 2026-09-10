@@ -88,7 +88,7 @@ export async function seed() {
     ],
   });
 
-  const clinics = [];
+  const clinics: Array<Awaited<ReturnType<typeof db.clinic.create>>> = [];
   for (const c of CLINICS) clinics.push(await db.clinic.create({ data: c }));
 
   const services = new Map<string, { id: string; durationMin: number }>();
@@ -136,8 +136,33 @@ export async function seed() {
     );
   }
 
+  // Patients belong to a home clinic, so nobody ends up booked in three cities
+  // at the same hour — a detail clients notice immediately in a demo.
+  const patientsByClinic = new Map<string, typeof patients>();
+  patients.forEach((patient, index) => {
+    const clinic = clinics[index % clinics.length];
+    patientsByClinic.set(clinic.id, [...(patientsByClinic.get(clinic.id) ?? []), patient]);
+  });
+  const clinicCursor = new Map<string, number>();
+  const patientBusy = new Map<string, Array<{ s: number; e: number }>>();
+
+  function nextFreePatient(clinicId: string, startsAt: Date, endsAt: Date) {
+    const pool = patientsByClinic.get(clinicId) ?? [];
+    if (pool.length === 0) return null;
+    const start = clinicCursor.get(clinicId) ?? 0;
+    for (let step = 0; step < pool.length; step++) {
+      const candidate = pool[(start + step) % pool.length];
+      const busy = patientBusy.get(candidate.id) ?? [];
+      const clash = busy.some((b) => startsAt.getTime() < b.e && endsAt.getTime() > b.s);
+      if (clash) continue;
+      clinicCursor.set(clinicId, (start + step + 1) % pool.length);
+      patientBusy.set(candidate.id, [...busy, { s: startsAt.getTime(), e: endsAt.getTime() }]);
+      return candidate;
+    }
+    return null;
+  }
+
   // Appointment book: for each doctor fill part of the grid over -3..+13 days
-  let patientCursor = 0;
   let apptCount = 0;
   const today = new Date();
   for (const doctor of doctors) {
@@ -161,8 +186,11 @@ export async function seed() {
             const mm = String(cursor % 60).padStart(2, "0");
             const startsAt = fromZonedTime(`${dateStr}T${hh}:${mm}:00`, tz);
             const endsAt = new Date(startsAt.getTime() + svc.durationMin * 60_000);
-            const patient = patients[patientCursor % patients.length];
-            patientCursor++;
+            const patient = nextFreePatient(doctor.clinicId, startsAt, endsAt);
+            if (!patient) {
+              cursor += 30;
+              continue;
+            }
             const isPast = startsAt < today;
             await db.appointment.create({
               data: {

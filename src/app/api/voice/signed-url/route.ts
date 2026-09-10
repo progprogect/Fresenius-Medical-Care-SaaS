@@ -3,8 +3,8 @@ import { getSignedUrl } from "@/lib/elevenlabs";
 
 export async function GET() {
   try {
-    const signedUrl = await getSignedUrl();
-    return NextResponse.json({ signedUrl });
+    const { signedUrl, dynamicVariables } = await getSignedUrl();
+    return NextResponse.json({ signedUrl, dynamicVariables });
   } catch (err) {
     const message = err instanceof Error ? err.message : "failed";
     return NextResponse.json({ error: message }, { status: 503 });

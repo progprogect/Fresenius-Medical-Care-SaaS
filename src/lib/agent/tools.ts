@@ -10,6 +10,7 @@ import {
 } from "@/lib/scheduling";
 import { createOffersForFreedSlot } from "@/lib/backfill";
 import { fmtClinic } from "@/lib/format";
+import { parseDateOfBirth, parsePhone } from "@/lib/patient-input";
 import { formatInTimeZone } from "date-fns-tz";
 
 /**
@@ -61,13 +62,17 @@ async function requireVerifiedPatient(ctx: ToolContext) {
   return { conv, patient: conv.patient };
 }
 
-function normalizePhone(raw: string) {
-  let p = raw.replace(/[\s\-().]/g, "");
-  if (p.startsWith("00")) p = `+${p.slice(2)}`;
-  return p;
+const actorFor = (ctx: ToolContext) => `ai-agent:${ctx.conversationId}`;
+
+/** "1985-04-12" -> "12 April 1985", so the agent can read a date back aloud. */
+function spellDate(isoDate: string) {
+  return formatInTimeZone(new Date(`${isoDate}T00:00:00Z`), "UTC", "d MMMM yyyy");
 }
 
-const actorFor = (ctx: ToolContext) => `ai-agent:${ctx.conversationId}`;
+/** Groups digits so a phone number can be read back in chunks. */
+function spellPhone(digits: string) {
+  return digits.replace(/(\d{3})(?=\d)/g, "$1 ").trim();
+}
 
 // ---------------------------------------------------------------- tools ----
 
@@ -156,30 +161,63 @@ const listDoctors: ToolDef = {
 const verifyPatient: ToolDef = {
   name: "verify_patient",
   description:
-    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Match phone number + date of birth. On success the session becomes verified.",
+    "REQUIRED before disclosing appointments or making changes for an existing patient (identity verification). Pass the phone number and date of birth EXACTLY as the patient gave them — any spelling or ordering is understood, so never ask them to repeat it in a particular format. On success the session becomes verified.",
   schema: z.object({
-    phone: z.string().describe("Patient phone in international format, e.g. +4915112345678"),
+    phone: z
+      .string()
+      .describe("Phone as the patient gave it; country code optional, spaces and dashes fine"),
     dateOfBirth: z
       .string()
-      .describe("Date of birth as YYYY-MM-DD"),
+      .describe("Date of birth as the patient gave it, e.g. '12.04.1985', '12 April 1985' or '1985-04-12'"),
   }),
   execute: async (args, ctx) => {
-    const phone = normalizePhone(String(args.phone));
-    const patient = await db.patient.findUnique({ where: { phone } });
-    const dobOk =
-      patient?.dateOfBirth &&
-      formatInTimeZone(patient.dateOfBirth, "UTC", "yyyy-MM-dd") === String(args.dateOfBirth);
-    if (!patient || !dobOk) {
+    const phone = parsePhone(String(args.phone));
+    const dob = parseDateOfBirth(String(args.dateOfBirth));
+
+    if (!phone.suffix)
+      return {
+        verified: false,
+        error: "PHONE_UNCLEAR",
+        hint: "The phone number did not come through. Read back the digits you think you heard and ask the patient to confirm with a simple yes, rather than making them repeat the whole number.",
+      };
+    if (dob.candidates.length === 0)
+      return {
+        verified: false,
+        error: "DOB_UNCLEAR",
+        hint: "The date of birth did not come through. Read back the date you think you heard, with the month spelled out, and ask them to confirm with a simple yes.",
+      };
+
+    // Match on the trailing digits so the country code and a national trunk
+    // zero are both optional for the caller.
+    const byPhone = await db.patient.findMany({
+      where: { phone: { endsWith: phone.suffix } },
+      take: 5,
+    });
+    const matches = byPhone.filter(
+      (p) =>
+        p.dateOfBirth &&
+        dob.candidates.includes(formatInTimeZone(p.dateOfBirth, "UTC", "yyyy-MM-dd"))
+    );
+    const patient = matches.length === 1 ? matches[0] : null;
+
+    if (!patient) {
       await logAudit({
         actor: actorFor(ctx),
         action: "VERIFY_FAILED",
         entity: "Conversation",
         entityId: ctx.conversationId,
-        details: { phone },
+        details: { suffix: phone.suffix, ambiguous: matches.length > 1 },
       });
       return {
         verified: false,
-        hint: "No match for this phone + date of birth. Ask the caller to double-check, or offer to register as a new patient, or escalate to a human.",
+        understood: {
+          phone: spellPhone(phone.digits),
+          dateOfBirth: dob.candidates.map(spellDate).join(" or "),
+        },
+        hint:
+          matches.length > 1
+            ? "More than one record matches. Escalate to a human rather than guessing."
+            : "No match — every reading of that date was already tried, so asking for another format will not help. Read the values in `understood` back to the patient and ask them to confirm or correct just the wrong one. If both are right, offer to register them as a new patient or escalate to a human.",
       };
     }
     await db.conversation.update({
@@ -209,19 +247,46 @@ const registerPatient: ToolDef = {
   schema: z.object({
     firstName: z.string().describe("Given name"),
     lastName: z.string().describe("Family name"),
-    phone: z.string().describe("International format, e.g. +4915112345678"),
-    dateOfBirth: z.string().describe("YYYY-MM-DD"),
+    phone: z.string().describe("Phone as the patient gave it; include the country code if they said one"),
+    dateOfBirth: z.string().describe("Date of birth as the patient gave it, in any common wording"),
   }),
   execute: async (args, ctx) => {
-    const phone = normalizePhone(String(args.phone));
-    const existing = await db.patient.findUnique({ where: { phone } });
+    const parsedPhone = parsePhone(String(args.phone));
+    const parsedDob = parseDateOfBirth(String(args.dateOfBirth));
+
+    if (!parsedPhone.suffix)
+      return {
+        error: "PHONE_UNCLEAR",
+        hint: "The phone number did not come through. Read back the digits you think you heard and ask the patient to confirm with a simple yes.",
+      };
+    if (!parsedPhone.e164)
+      return {
+        error: "PHONE_NEEDS_COUNTRY_CODE",
+        hint: "A new record needs the country code. Ask which country the number is in, or ask for the number with its country code — do not demand a written format.",
+      };
+    if (parsedDob.candidates.length === 0)
+      return {
+        error: "DOB_UNCLEAR",
+        hint: "The date of birth did not come through. Read back the date you think you heard, with the month spelled out, and ask them to confirm with a simple yes.",
+      };
+    if (parsedDob.ambiguous)
+      return {
+        error: "DOB_AMBIGUOUS",
+        mostLikely: spellDate(parsedDob.candidates[0]),
+        alternative: spellDate(parsedDob.candidates[1]),
+        hint: `Day and month could be read either way and this creates a new record, so confirm once: ask "So that's ${spellDate(parsedDob.candidates[0])}?" — a yes is enough. If they say no, it is ${spellDate(parsedDob.candidates[1])}. Then call this tool again with the month spelled out.`,
+      };
+
+    const phone = parsedPhone.e164;
+    const existing = await db.patient.findFirst({
+      where: { phone: { endsWith: parsedPhone.suffix } },
+    });
     if (existing)
       return {
         error: "PHONE_EXISTS",
-        hint: "A patient with this phone already exists. Use verify_patient with phone + date of birth instead.",
+        hint: "A patient with this phone already exists. Use verify_patient with the phone and date of birth instead.",
       };
-    const dob = new Date(`${args.dateOfBirth}T00:00:00Z`);
-    if (isNaN(dob.getTime())) return { error: "BAD_DOB", hint: "Date of birth must be YYYY-MM-DD" };
+    const dob = new Date(`${parsedDob.candidates[0]}T00:00:00Z`);
     const patient = await db.patient.create({
       data: {
         firstName: String(args.firstName),
@@ -256,16 +321,24 @@ const getMyAppointments: ToolDef = {
       include: { clinic: true, doctor: true, service: true },
       orderBy: { startsAt: "asc" },
     });
-    return appts.map((a) => ({
+    const appointments = appts.map((a) => ({
       appointmentId: a.id,
       version: a.version,
       service: a.service.name,
       doctor: `${a.doctor.title} ${a.doctor.name}`,
       clinic: `${a.clinic.name}, ${a.clinic.city}`,
+      city: a.clinic.city,
       when: fmtClinic(a.startsAt, a.clinic.timezone),
       startsAtIso: a.startsAt.toISOString(),
       status: a.status,
     }));
+    if (appointments.length <= 1) return appointments;
+    // Several upcoming visits: name the soonest rather than reading the list out.
+    return {
+      appointments,
+      mostLikely: appointments[0],
+      hint: `The patient has ${appointments.length} upcoming visits. Do NOT list them. Ask about the soonest one as a yes/no question ("Your next one is the ${appointments[0].service} in ${appointments[0].city} on ${appointments[0].when} — is that the one?"), and only move to the next if they say no.`,
+    };
   },
 };
 

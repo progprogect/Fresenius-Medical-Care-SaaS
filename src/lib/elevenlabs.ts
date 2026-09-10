@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AGENT_TOOLS } from "@/lib/agent/tools";
-import { buildSystemPrompt } from "@/lib/agent/prompt";
+import { buildCalendarBlock, buildSystemPrompt, CALENDAR_VARIABLE } from "@/lib/agent/prompt";
 import { getSettings, saveSettings } from "@/lib/settings";
 
 const BASE = "https://api.elevenlabs.io";
@@ -136,7 +136,9 @@ export async function syncElevenLabsAgent() {
   const agent = await getSettings("agent");
   const baseUrl = process.env.APP_BASE_URL || "http://localhost:3000";
   const secret = process.env.AGENT_TOOLS_SECRET || "";
-  const prompt = await buildSystemPrompt("voice");
+  // The agent stores a snapshot of this prompt, so the calendar goes in as a
+  // dynamic variable supplied at call time rather than a frozen table.
+  const prompt = await buildSystemPrompt("voice", { calendarAsVariable: true });
 
   const body = {
     name: `Fresenius Medical Care Assistant (${agent.displayName})`,
@@ -174,12 +176,18 @@ export async function syncElevenLabsAgent() {
   return { agentId: created.agent_id, created: true };
 }
 
-/** Signed URL so the browser widget can open a private-agent voice session. */
+/**
+ * Signed URL plus the per-call variables the agent's prompt expects, so the
+ * browser widget can open a private-agent voice session that knows today's date.
+ */
 export async function getSignedUrl() {
   const agent = await getSettings("agent");
   if (!agent.elevenLabsAgentId) throw new Error("Voice agent is not provisioned yet");
   const data = (await el(
     `/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(agent.elevenLabsAgentId)}`
   )) as { signed_url: string };
-  return data.signed_url;
+  return {
+    signedUrl: data.signed_url,
+    dynamicVariables: { [CALENDAR_VARIABLE]: await buildCalendarBlock() },
+  };
 }

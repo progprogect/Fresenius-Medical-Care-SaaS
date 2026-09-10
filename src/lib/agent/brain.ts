@@ -28,6 +28,27 @@ function openaiTools(): ChatCompletionTool[] {
 }
 
 /**
+ * Facts already established in this conversation, restated for the model so it
+ * never asks a verified patient to identify themselves twice.
+ */
+async function knownContext(conversationId: string) {
+  const conv = await db.conversation.findUnique({
+    where: { id: conversationId },
+    include: { patient: true },
+  });
+  if (!conv?.patient) return null;
+  const p = conv.patient;
+  const dob = p.dateOfBirth ? p.dateOfBirth.toISOString().slice(0, 10) : "unknown";
+  return `## ALREADY KNOWN — do not ask for any of this again
+Patient: ${p.firstName} ${p.lastName}
+Phone: ${p.phone}
+Date of birth: ${dob}
+Preferred language: ${p.language}
+Verified in this conversation: ${conv.verified ? "yes" : "no"}
+Use these values directly in tool calls. Address the patient by their first name.`;
+}
+
+/**
  * Runs one user turn through the OpenAI tool loop, persisting all messages.
  * Used by the widget chat and by the WhatsApp inbound webhook.
  */
@@ -45,8 +66,10 @@ export async function runAgentTurn(conversationId: string, userText: string): Pr
     take: 60,
   });
 
+  const known = await knownContext(conversationId);
   const messages: ChatCompletionMessageParam[] = [
     { role: "system", content: await buildSystemPrompt("chat") },
+    ...(known ? [{ role: "system" as const, content: known }] : []),
     ...history.map((m): ChatCompletionMessageParam => {
       if (m.role === "USER") return { role: "user", content: m.content };
       if (m.role === "TOOL")
