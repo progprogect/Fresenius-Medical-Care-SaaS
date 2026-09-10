@@ -3,21 +3,27 @@
 import * as React from "react";
 import { addDays, startOfWeek } from "date-fns";
 import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, GripVertical, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import type { CalAppointment, CalClinic, CalDoctor, CalPatient, CalService } from "./types";
 import { AppointmentSheet } from "./appointment-sheet";
 import { NewAppointmentDialog } from "./new-appointment-dialog";
+import { rescheduleAppointmentAction } from "@/app/(admin)/calendar/actions";
 
 const START_HOUR = 7;
 const END_HOUR = 20;
 const PX_PER_MIN = 1.05;
 const GRID_HEIGHT = (END_HOUR - START_HOUR) * 60 * PX_PER_MIN;
+const SNAP_MIN = 15;
+const DRAG_THRESHOLD_PX = 4;
 
 type Lane = { end: number };
 
@@ -37,6 +43,17 @@ function packLanes<T extends { startMin: number; endMin: number }>(items: T[]) {
   return { placed, laneCount: Math.max(1, lanes.length) };
 }
 
+type DragState = {
+  appointment: CalAppointment;
+  originColumnKey: string;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  offsetMin: number;
+  targetColumnKey: string;
+  moved: boolean;
+};
+
 export function CalendarView({
   clinics, doctors, services, patients,
 }: {
@@ -47,6 +64,10 @@ export function CalendarView({
 }) {
   const [clinicId, setClinicId] = React.useState(clinics[0]?.id ?? "");
   const [doctorId, setDoctorId] = React.useState<string>("all");
+  const [serviceId, setServiceId] = React.useState<string>("all");
+  const [status, setStatus] = React.useState<string>("open");
+  const [source, setSource] = React.useState<string>("all");
+  const [query, setQuery] = React.useState("");
   const [view, setView] = React.useState<"day" | "week">("day");
   const [anchor, setAnchor] = React.useState(() => new Date());
   const [appointments, setAppointments] = React.useState<CalAppointment[]>([]);
@@ -54,6 +75,9 @@ export function CalendarView({
   const [selected, setSelected] = React.useState<CalAppointment | null>(null);
   const [newOpen, setNewOpen] = React.useState(false);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [drag, setDrag] = React.useState<DragState | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const columnRefs = React.useRef(new Map<string, HTMLDivElement>());
 
   const clinic = clinics.find((c) => c.id === clinicId) ?? clinics[0];
   const tz = clinic?.timezone ?? "Europe/Berlin";
@@ -96,31 +120,135 @@ export function CalendarView({
 
   const days = Array.from({ length: rangeDays }, (_, i) => addDays(rangeStart, i));
 
-  // Day view: one column per doctor; Week view: one column per day
+  const visible = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return appointments.filter((a) => {
+      if (serviceId !== "all" && a.service.id !== serviceId) return false;
+      if (source !== "all" && a.source !== source) return false;
+      if (status === "open" && (a.status === "CANCELLED" || a.status === "COMPLETED" || a.status === "NO_SHOW"))
+        return false;
+      if (status !== "all" && status !== "open" && a.status !== status) return false;
+      if (q) {
+        const hay = `${a.patient.firstName} ${a.patient.lastName} ${a.patient.phone} ${a.service.name}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [appointments, serviceId, source, status, query]);
+
   const columns =
     view === "day"
       ? (doctorId === "all" ? clinicDoctors : clinicDoctors.filter((d) => d.id === doctorId)).map((d) => ({
           key: d.id,
           title: d.name,
-          color: d.color,
+          color: d.color as string | undefined,
+          doctorId: d.id,
+          dayStr: formatInTimeZone(days[0], tz, "yyyy-MM-dd"),
           filter: (a: CalAppointment) => a.doctor.id === d.id,
-          day: days[0],
         }))
       : days.map((day) => ({
-          key: day.toISOString(),
+          key: formatInTimeZone(day, tz, "yyyy-MM-dd"),
           title: formatInTimeZone(day, tz, "EEE d MMM"),
           color: undefined as string | undefined,
+          doctorId: undefined as string | undefined,
+          dayStr: formatInTimeZone(day, tz, "yyyy-MM-dd"),
           filter: (a: CalAppointment) =>
             formatInTimeZone(new Date(a.startsAt), tz, "yyyy-MM-dd") ===
             formatInTimeZone(day, tz, "yyyy-MM-dd"),
-          day,
         }));
 
-  function minutesInDay(iso: string, day: Date) {
-    void day;
+  function minutesOf(iso: string) {
     const h = Number(formatInTimeZone(new Date(iso), tz, "H"));
     const m = Number(formatInTimeZone(new Date(iso), tz, "m"));
     return h * 60 + m;
+  }
+
+  const isDraggable = (a: CalAppointment) => a.status === "BOOKED" || a.status === "CONFIRMED";
+
+  function columnKeyAt(clientX: number, clientY: number) {
+    for (const [key, el] of columnRefs.current.entries()) {
+      const r = el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top - 40 && clientY <= r.bottom + 40)
+        return key;
+    }
+    return null;
+  }
+
+  function onPointerDown(e: React.PointerEvent, a: CalAppointment, columnKey: string) {
+    if (!isDraggable(a) || saving) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setDrag({
+      appointment: a,
+      originColumnKey: columnKey,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      offsetMin: 0,
+      targetColumnKey: columnKey,
+      moved: false,
+    });
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const dy = e.clientY - drag.startY;
+    const dx = e.clientX - drag.startX;
+    const moved = drag.moved || Math.abs(dy) > DRAG_THRESHOLD_PX || Math.abs(dx) > DRAG_THRESHOLD_PX;
+    if (!moved) return;
+    const rawMin = dy / PX_PER_MIN;
+    const offsetMin = Math.round(rawMin / SNAP_MIN) * SNAP_MIN;
+    const targetColumnKey = columnKeyAt(e.clientX, e.clientY) ?? drag.targetColumnKey;
+    setDrag({ ...drag, offsetMin, targetColumnKey, moved: true });
+  }
+
+  async function onPointerUp(e: React.PointerEvent) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const current = drag;
+    setDrag(null);
+
+    if (!current.moved) {
+      setSelected(current.appointment);
+      return;
+    }
+    const targetColumn = columns.find((c) => c.key === current.targetColumnKey);
+    if (!targetColumn) return;
+
+    const a = current.appointment;
+    const originalMin = minutesOf(a.startsAt);
+    const newMin = originalMin + current.offsetMin;
+    const duration = a.service.durationMin;
+    const sameSlot = current.offsetMin === 0 && current.targetColumnKey === current.originColumnKey;
+    if (sameSlot) return;
+
+    if (newMin < START_HOUR * 60 || newMin + duration > END_HOUR * 60) {
+      toast.error(`Outside the visible day (${START_HOUR}:00–${END_HOUR}:00)`);
+      return;
+    }
+
+    const hh = String(Math.floor(newMin / 60)).padStart(2, "0");
+    const mm = String(newMin % 60).padStart(2, "0");
+    const newStart = fromZonedTime(`${targetColumn.dayStr}T${hh}:${mm}:00`, tz);
+    const newDoctorId = view === "day" ? targetColumn.doctorId : a.doctor.id;
+
+    setSaving(true);
+    const res = await rescheduleAppointmentAction({
+      appointmentId: a.id,
+      version: a.version,
+      newStartsAtIso: newStart.toISOString(),
+      newDoctorId,
+    });
+    setSaving(false);
+    if (!res.ok) {
+      toast.error(res.error);
+      refresh();
+      return;
+    }
+    toast.success(
+      `Moved to ${formatInTimeZone(newStart, tz, "EEE d MMM, HH:mm")}${
+        newDoctorId && newDoctorId !== a.doctor.id ? ` · ${targetColumn.title}` : ""
+      }`
+    );
+    refresh();
   }
 
   const hours = Array.from({ length: END_HOUR - START_HOUR }, (_, i) => START_HOUR + i);
@@ -129,34 +257,69 @@ export function CalendarView({
       ? formatInTimeZone(days[0], tz, "EEEE, d MMMM yyyy")
       : `${formatInTimeZone(days[0], tz, "d MMM")} — ${formatInTimeZone(days[6], tz, "d MMM yyyy")}`;
 
+  const clinicServiceIds = new Set(clinicDoctors.flatMap((d) => d.serviceIds));
+  const clinicServices = services.filter((s) => clinicServiceIds.has(s.id));
+  const hiddenCount = appointments.length - visible.length;
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={clinicId} onValueChange={(v) => { setClinicId(v); setDoctorId("all"); }}>
-          <SelectTrigger className="w-64">
-            <SelectValue />
-          </SelectTrigger>
+        <Select value={clinicId} onValueChange={(v) => { setClinicId(v); setDoctorId("all"); setServiceId("all"); }}>
+          <SelectTrigger className="w-60"><SelectValue /></SelectTrigger>
           <SelectContent>
             {clinics.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.city} — {c.name}
-              </SelectItem>
+              <SelectItem key={c.id} value={c.id}>{c.city} — {c.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
         <Select value={doctorId} onValueChange={setDoctorId}>
-          <SelectTrigger className="w-52">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All doctors</SelectItem>
             {clinicDoctors.map((d) => (
-              <SelectItem key={d.id} value={d.id}>
-                {d.name}
-              </SelectItem>
+              <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <Select value={serviceId} onValueChange={setServiceId}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All services</SelectItem>
+            {clinicServices.map((s) => (
+              <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="open">Active visits</SelectItem>
+            <SelectItem value="all">Include cancelled</SelectItem>
+            <SelectItem value="BOOKED">Booked only</SelectItem>
+            <SelectItem value="CONFIRMED">Confirmed only</SelectItem>
+            <SelectItem value="COMPLETED">Completed only</SelectItem>
+            <SelectItem value="CANCELLED">Cancelled only</SelectItem>
+            <SelectItem value="NO_SHOW">No-shows</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={source} onValueChange={setSource}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any source</SelectItem>
+            <SelectItem value="WIDGET_CHAT">Widget chat</SelectItem>
+            <SelectItem value="WIDGET_VOICE">Widget voice</SelectItem>
+            <SelectItem value="PHONE">Phone</SelectItem>
+            <SelectItem value="WHATSAPP">WhatsApp</SelectItem>
+            <SelectItem value="MANUAL">Staff</SelectItem>
+            <SelectItem value="BACKFILL">Slot offer</SelectItem>
+          </SelectContent>
+        </Select>
+        <Input
+          placeholder="Find patient..."
+          className="w-44"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <Tabs value={view} onValueChange={(v) => setView(v as "day" | "week")}>
           <TabsList>
             <TabsTrigger value="day">Day</TabsTrigger>
@@ -167,9 +330,7 @@ export function CalendarView({
           <Button variant="outline" size="icon" onClick={() => setAnchor((a) => addDays(a, view === "day" ? -1 : -7))}>
             <ChevronLeft className="size-4" />
           </Button>
-          <Button variant="outline" onClick={() => setAnchor(new Date())}>
-            Today
-          </Button>
+          <Button variant="outline" onClick={() => setAnchor(new Date())}>Today</Button>
           <Button variant="outline" size="icon" onClick={() => setAnchor((a) => addDays(a, view === "day" ? 1 : 7))}>
             <ChevronRight className="size-4" />
           </Button>
@@ -179,8 +340,17 @@ export function CalendarView({
         </div>
       </div>
 
-      <div className="text-sm font-medium">{title}
-        <span className="ml-2 text-xs font-normal text-muted-foreground">local time {tz}</span>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium">{title}</span>
+        <span className="text-xs text-muted-foreground">local time {tz}</span>
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          <GripVertical className="size-3" />
+          drag a visit to change its time{view === "day" ? " or doctor" : " or day"}
+        </span>
+        {hiddenCount > 0 && (
+          <Badge variant="outline" className="font-normal">{hiddenCount} hidden by filters</Badge>
+        )}
+        {saving && <Badge variant="secondary" className="font-normal">saving…</Badge>}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border bg-background">
@@ -191,7 +361,6 @@ export function CalendarView({
           </div>
         ) : (
           <div className="flex min-w-fit">
-            {/* time gutter */}
             <div className="sticky left-0 z-10 w-14 shrink-0 border-r bg-background">
               <div className="h-9 border-b" />
               <div className="relative" style={{ height: GRID_HEIGHT }}>
@@ -212,21 +381,30 @@ export function CalendarView({
               </div>
             )}
             {columns.map((col) => {
-              const items = appointments.filter(col.filter).map((a) => ({
+              const items = visible.filter(col.filter).map((a) => ({
                 a,
-                startMin: minutesInDay(a.startsAt, col.day),
-                endMin: minutesInDay(a.startsAt, col.day) + a.service.durationMin,
+                startMin: minutesOf(a.startsAt),
+                endMin: minutesOf(a.startsAt) + a.service.durationMin,
               }));
               const { placed, laneCount } = packLanes(items);
+              const isDropTarget = drag?.moved && drag.targetColumnKey === col.key;
               return (
-                <div key={col.key} className="min-w-44 flex-1 border-r last:border-r-0">
+                <div
+                  key={col.key}
+                  className={`min-w-44 flex-1 border-r last:border-r-0 ${isDropTarget ? "bg-primary/5" : ""}`}
+                >
                   <div className="flex h-9 items-center gap-1.5 border-b px-2 text-xs font-medium">
-                    {col.color && (
-                      <span className="size-2 rounded-full" style={{ background: col.color }} />
-                    )}
+                    {col.color && <span className="size-2 rounded-full" style={{ background: col.color }} />}
                     <span className="truncate">{col.title}</span>
                   </div>
-                  <div className="relative" style={{ height: GRID_HEIGHT }}>
+                  <div
+                    ref={(el) => {
+                      if (el) columnRefs.current.set(col.key, el);
+                      else columnRefs.current.delete(col.key);
+                    }}
+                    className="relative"
+                    style={{ height: GRID_HEIGHT }}
+                  >
                     {hours.map((h) => (
                       <div
                         key={h}
@@ -235,16 +413,34 @@ export function CalendarView({
                       />
                     ))}
                     {placed.map(({ item, laneIdx }) => {
-                      const top = (item.startMin - START_HOUR * 60) * PX_PER_MIN;
+                      const dragging = drag?.appointment.id === item.a.id && drag.moved;
+                      const shownStart = dragging ? item.startMin + drag.offsetMin : item.startMin;
+                      const top = (shownStart - START_HOUR * 60) * PX_PER_MIN;
                       const height = Math.max(22, (item.endMin - item.startMin) * PX_PER_MIN - 2);
                       const width = 100 / laneCount;
                       const cancelled = item.a.status === "CANCELLED";
                       const done = item.a.status === "COMPLETED" || item.a.status === "NO_SHOW";
+                      const movable = isDraggable(item.a);
+                      // While dragging, the block follows the pointer into the hovered column.
+                      if (dragging && drag.targetColumnKey !== col.key) return null;
                       return (
-                        <button
+                        <div
                           key={item.a.id}
-                          onClick={() => setSelected(item.a)}
-                          className="absolute overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight shadow-xs transition-opacity hover:opacity-90"
+                          role="button"
+                          tabIndex={0}
+                          onPointerDown={(e) => onPointerDown(e, item.a, col.key)}
+                          onPointerMove={onPointerMove}
+                          onPointerUp={onPointerUp}
+                          onPointerCancel={() => setDrag(null)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelected(item.a);
+                            }
+                          }}
+                          className={`group absolute select-none overflow-hidden rounded-md border px-1.5 py-1 text-left text-[11px] leading-tight shadow-xs outline-none transition-shadow hover:z-20 hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring ${
+                            movable ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
+                          } ${dragging ? "z-30 opacity-90 shadow-lg ring-2 ring-primary" : ""}`}
                           style={{
                             top,
                             height,
@@ -257,17 +453,24 @@ export function CalendarView({
                               ? "var(--border)"
                               : `color-mix(in oklab, ${item.a.doctor.color} 45%, white)`,
                             opacity: cancelled ? 0.6 : 1,
+                            touchAction: "none",
                           }}
+                          title={
+                            movable
+                              ? "Drag to reschedule, click to open"
+                              : `${item.a.status.toLowerCase()} — click to open`
+                          }
                         >
                           <div className={`font-medium ${cancelled ? "line-through" : ""}`}>
-                            {formatInTimeZone(new Date(item.a.startsAt), tz, "HH:mm")}{" "}
+                            {String(Math.floor(shownStart / 60)).padStart(2, "0")}:
+                            {String(shownStart % 60).padStart(2, "0")}{" "}
                             {item.a.patient.firstName} {item.a.patient.lastName}
                           </div>
                           <div className="truncate text-muted-foreground">{item.a.service.name}</div>
                           {view === "week" && doctorId === "all" && (
                             <div className="truncate text-muted-foreground">{item.a.doctor.name}</div>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

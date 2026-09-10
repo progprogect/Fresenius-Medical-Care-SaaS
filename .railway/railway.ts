@@ -3,7 +3,7 @@
  * Keeps deploy behaviour in version control: run pending migrations, then the
  * idempotent bootstrap (seeds the demo dataset only on an empty database).
  */
-export default {
+const config = {
   services: {
     "Fresenius-Medical-Care-SaaS": {
       deploy: {
@@ -15,3 +15,5 @@ export default {
     },
   },
 };
+
+export default config;

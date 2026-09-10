@@ -15,7 +15,7 @@ plugged in later behind the same interfaces.
 | Website widget | Embeddable with one `<script src=".../embed.js">` tag; chat + voice; demo site at `/demo-site` |
 | WhatsApp / SMS | Twilio channel for inbound conversations and outbound offers; **demo mode** simulates sends so everything can be shown without a configured account |
 | Backfill (earlier slots) | When a slot frees up (cancel/reschedule), patients with later appointments automatically get a WhatsApp offer with a one-tap accept link; first accept wins |
-| Calendar | Day/week appointment book per clinic and doctor; create, reschedule, cancel, change status manually |
+| Calendar | Day/week appointment book per clinic and doctor; drag a visit to change its time, doctor or day; create, reschedule, cancel, change status manually; filter by doctor, service, status, source and patient |
 | Catalog | Clinics, doctors (bios, languages, working hours, services), services (duration, price, prep instructions) |
 | Governance | Audit trail of every AI/staff action, optimistic locking on appointments, verification events, escalation queue |
 | Access | Email+password auth, ADMIN/STAFF roles, admins manage users |

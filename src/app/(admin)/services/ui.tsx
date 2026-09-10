@@ -20,7 +20,8 @@ import { saveServiceAction } from "./actions";
 
 type Service = {
   id?: string; name: string; category: string; durationMin: number; priceEur: number;
-  description: string; prepInstructions: string; active: boolean; doctors?: number;
+  description: string; prepInstructions: string; active: boolean;
+  doctors?: number; appointments?: number;
 };
 
 const EMPTY: Service = {
@@ -61,6 +62,7 @@ export function ServicesTable({ services }: { services: Service[] }) {
             <TableHead className="text-right">Duration</TableHead>
             <TableHead className="text-right">Price</TableHead>
             <TableHead className="text-right">Doctors</TableHead>
+            <TableHead className="text-right">Booked</TableHead>
             <TableHead>Status</TableHead>
             <TableHead className="w-10" />
           </TableRow>
@@ -73,6 +75,7 @@ export function ServicesTable({ services }: { services: Service[] }) {
               <TableCell className="text-right">{s.durationMin} min</TableCell>
               <TableCell className="text-right">{formatMoney(s.priceEur * 100)}</TableCell>
               <TableCell className="text-right">{s.doctors}</TableCell>
+              <TableCell className="text-right text-muted-foreground">{s.appointments ?? 0}</TableCell>
               <TableCell>
                 <Badge variant={s.active ? "secondary" : "outline"}>{s.active ? "active" : "inactive"}</Badge>
               </TableCell>

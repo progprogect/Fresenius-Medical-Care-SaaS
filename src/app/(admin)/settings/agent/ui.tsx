@@ -2,13 +2,13 @@
 
 import * as React from "react";
 import { toast } from "sonner";
-import { Bot, RefreshCw } from "lucide-react";
+import { Bot, RefreshCw, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,9 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
   const [form, setForm] = React.useState(initial);
   const [busy, setBusy] = React.useState(false);
   const [syncing, setSyncing] = React.useState(false);
-  const [voices, setVoices] = React.useState<Array<{ voiceId: string; name: string; labels: string }>>([]);
+  const [voices, setVoices] = React.useState<
+    Array<{ voiceId: string; name: string; labels: string; category: string; saved: boolean }>
+  >([]);
   const [agentId, setAgentId] = React.useState(initial.elevenLabsAgentId);
 
   React.useEffect(() => {
@@ -37,6 +39,26 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
       .then((d) => setVoices(d.voices ?? []))
       .catch(() => {});
   }, []);
+
+  const savedVoices = voices.filter((v) => v.saved);
+  const libraryVoices = voices.filter((v) => !v.saved);
+  const selectedVoice = voices.find((v) => v.voiceId === form.voiceId);
+  const [previewing, setPreviewing] = React.useState(false);
+
+  async function previewVoice() {
+    setPreviewing(true);
+    try {
+      const res = await fetch(`/api/elevenlabs/preview?voiceId=${encodeURIComponent(form.voiceId)}`);
+      if (!res.ok) throw new Error("preview failed");
+      const blob = await res.blob();
+      const audio = new Audio(URL.createObjectURL(blob));
+      await audio.play();
+    } catch {
+      toast.error("Could not play a preview for this voice");
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -119,13 +141,39 @@ export function AgentSettingsForm({ initial }: { initial: AgentSettings }) {
                   {voices.length === 0 && form.voiceId && (
                     <SelectItem value={form.voiceId}>{form.voiceId}</SelectItem>
                   )}
-                  {voices.map((v) => (
-                    <SelectItem key={v.voiceId} value={v.voiceId}>
-                      {v.name}{v.labels ? ` · ${v.labels}` : ""}
-                    </SelectItem>
-                  ))}
+                  {savedVoices.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Your saved voices</SelectLabel>
+                      {savedVoices.map((v) => (
+                        <SelectItem key={v.voiceId} value={v.voiceId}>
+                          {v.name}{v.labels ? ` · ${v.labels}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {libraryVoices.length > 0 && (
+                    <SelectGroup>
+                      <SelectLabel>Library</SelectLabel>
+                      {libraryVoices.map((v) => (
+                        <SelectItem key={v.voiceId} value={v.voiceId}>
+                          {v.name}{v.labels ? ` · ${v.labels}` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
                 </SelectContent>
               </Select>
+              {selectedVoice && (
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={previewVoice} disabled={previewing}>
+                    <Volume2 className="size-3.5" />
+                    {previewing ? "Loading..." : "Preview voice"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedVoice.saved ? "saved voice" : "library voice"}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <Button onClick={save} disabled={busy}>Save settings</Button>

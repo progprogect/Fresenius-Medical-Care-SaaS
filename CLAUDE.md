@@ -16,6 +16,11 @@ See README.md and docs/ARCHITECTURE.md first.
 - Scheduling changes go ONLY through `src/lib/scheduling.ts`; agent capabilities ONLY through the
   tool registry `src/lib/agent/tools.ts` (shared by chat and voice — never fork the logic).
 - Appointments use optimistic locking (`version`); pass and check it on every mutation.
+- The agent must never ask a patient for an email address (unreliable over voice) and never ask
+  for their city or country.
+- Relative dates are resolved from the CALENDAR block that `buildSystemPrompt` injects, never by
+  model arithmetic; a named day goes to `find_slots` as `onDate`.
+- List pages filter through the shared URL-driven `FilterBar`; filters live in the query string.
 - Money is EUR cents; times are stored UTC and rendered in each clinic's timezone.
 
 ## Commands

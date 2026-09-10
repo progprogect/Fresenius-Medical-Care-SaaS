@@ -205,13 +205,12 @@ const verifyPatient: ToolDef = {
 const registerPatient: ToolDef = {
   name: "register_patient",
   description:
-    "Register a NEW patient (when no existing record). Collect first name, last name, phone, date of birth; email optional. The session becomes verified for this new patient.",
+    "Register a NEW patient (when no existing record). Collect first name, last name, phone and date of birth ONLY. Never ask for an email address — it is unreliable to capture by voice and the clinic does not need it to book.",
   schema: z.object({
-    firstName: z.string(),
-    lastName: z.string(),
+    firstName: z.string().describe("Given name"),
+    lastName: z.string().describe("Family name"),
     phone: z.string().describe("International format, e.g. +4915112345678"),
     dateOfBirth: z.string().describe("YYYY-MM-DD"),
-    email: z.string().optional(),
   }),
   execute: async (args, ctx) => {
     const phone = normalizePhone(String(args.phone));
@@ -228,7 +227,6 @@ const registerPatient: ToolDef = {
         firstName: String(args.firstName),
         lastName: String(args.lastName),
         phone,
-        email: args.email ? String(args.email) : null,
         dateOfBirth: dob,
       },
     });
@@ -279,36 +277,58 @@ const findSlots: ToolDef = {
     serviceId: z.string(),
     clinicId: z.string().optional(),
     doctorId: z.string().optional(),
-    fromDate: z.string().optional().describe("Earliest date YYYY-MM-DD (clinic local)"),
+    onDate: z
+      .string()
+      .optional()
+      .describe(
+        "Exact calendar day YYYY-MM-DD when the patient named a specific day (\"next Monday\", \"the 15th\"). Resolve it from the CALENDAR block in your instructions — never guess. Returns only that day."
+      ),
+    fromDate: z
+      .string()
+      .optional()
+      .describe("Earliest date YYYY-MM-DD (clinic local) when the patient gave a range, not one day"),
     timeOfDay: z.enum(["morning", "afternoon", "evening", "any"]).optional(),
     days: z.number().optional().describe("How many days ahead to search (default 7)"),
   }),
   execute: async (args, ctx) => {
     void ctx;
-    const fromDate = args.fromDate ? new Date(`${args.fromDate}T00:00:00Z`) : undefined;
+    const exactDay = args.onDate ? String(args.onDate) : undefined;
+    const anchor = exactDay ?? (args.fromDate ? String(args.fromDate) : undefined);
+    const fromDate = anchor ? new Date(`${anchor}T00:00:00Z`) : undefined;
     const slots = await findAvailableSlots({
       serviceId: String(args.serviceId),
       clinicId: args.clinicId ? String(args.clinicId) : undefined,
       doctorId: args.doctorId ? String(args.doctorId) : undefined,
       fromDate,
-      days: args.days ? Number(args.days) : 7,
+      days: exactDay ? 1 : args.days ? Number(args.days) : 7,
       limit: 60,
     });
     const tod = (args.timeOfDay as string) || "any";
     const filtered = slots.filter((s) => {
+      if (exactDay && formatInTimeZone(s.startsAt, s.timezone, "yyyy-MM-dd") !== exactDay) return false;
       if (tod === "any") return true;
       const hour = Number(formatInTimeZone(s.startsAt, s.timezone, "H"));
       if (tod === "morning") return hour < 12;
       if (tod === "afternoon") return hour >= 12 && hour < 17;
       return hour >= 17;
     });
-    return filtered.slice(0, 12).map((s) => ({
+    const results = filtered.slice(0, 12).map((s) => ({
       slotRef: slotRef(s.doctorId, s.startsAt),
       when: fmtClinic(s.startsAt, s.timezone),
       startsAtIso: s.startsAt.toISOString(),
       doctor: s.doctorName,
       clinic: `${s.clinicName}, ${s.clinicCity}`,
     }));
+    if (results.length === 0) {
+      return {
+        slots: [],
+        searchedDay: exactDay ?? null,
+        hint: exactDay
+          ? `Nothing free on ${exactDay}. Tell the patient that exact day is fully booked and offer to look at nearby days (call find_slots again with fromDate).`
+          : "No free slots in the searched range. Offer a later date range or another clinic.",
+      };
+    }
+    return results;
   },
 };
 

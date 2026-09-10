@@ -34,15 +34,42 @@ async function el(path: string, init?: RequestInit) {
   return json;
 }
 
-export async function listVoices(): Promise<Array<{ voiceId: string; name: string; labels: string }>> {
-  const data = (await el("/v1/voices")) as {
-    voices?: Array<{ voice_id: string; name: string; labels?: Record<string, string> }>;
+export type VoiceOption = {
+  voiceId: string;
+  name: string;
+  labels: string;
+  category: string;
+  saved: boolean;
+};
+
+/**
+ * Voices offered in the admin panel. Voices saved in the workspace (cloned,
+ * professional, generated) come first — those are the curated, most natural
+ * ones — followed by the premade library.
+ */
+export async function listVoices(): Promise<VoiceOption[]> {
+  const data = (await el("/v1/voices?page_size=100")) as {
+    voices?: Array<{
+      voice_id: string;
+      name: string;
+      category?: string;
+      labels?: Record<string, string>;
+    }>;
   };
-  return (data.voices ?? []).map((v) => ({
-    voiceId: v.voice_id,
-    name: v.name,
-    labels: Object.values(v.labels ?? {}).join(", "),
-  }));
+  const options = (data.voices ?? []).map((v) => {
+    const category = v.category ?? "premade";
+    return {
+      voiceId: v.voice_id,
+      name: v.name,
+      labels: Object.values(v.labels ?? {}).filter(Boolean).join(", "),
+      category,
+      saved: category !== "premade",
+    };
+  });
+  return options.sort((a, b) => {
+    if (a.saved !== b.saved) return a.saved ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
 }
 
 type JsonSchemaNode = {

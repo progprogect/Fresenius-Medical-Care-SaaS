@@ -28,7 +28,7 @@ const groups = [
       { href: "/appointments", label: "Appointments", icon: ClipboardList },
       { href: "/patients", label: "Patients", icon: UserRound },
       { href: "/conversations", label: "Conversations", icon: MessageSquare },
-      { href: "/backfill", label: "Slot offers", icon: Send },
+      { href: "/backfill", label: "Slot offers", icon: Send, hint: "Fill gaps from cancellations" },
     ],
   },
   {
@@ -84,7 +84,9 @@ export function AdminSidebar({ role }: { role: string }) {
                       )}
                     >
                       <item.icon className="size-4" />
-                      {item.label}
+                      <span title={"hint" in item ? (item.hint as string) : undefined}>
+                        {item.label}
+                      </span>
                     </Link>
                   );
                 })}

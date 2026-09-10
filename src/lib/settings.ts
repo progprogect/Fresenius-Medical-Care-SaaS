@@ -48,7 +48,7 @@ const DEFAULTS: {
     language: "en",
     extraLanguages: ["de", "fr", "es", "it", "pl"],
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    voiceId: "EXAVITQu4vr4xnSDxMaL",
+    voiceId: "eJRhExUeshH24BIBe89c", // Kate — natural, warm, professional
     elevenLabsAgentId: "",
     firstMessage:
       "Hello! I'm Nora, your clinic assistant. I can help you book, move or cancel an appointment. How can I help you today?",
