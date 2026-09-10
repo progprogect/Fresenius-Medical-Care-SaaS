@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { AlertTriangle } from "lucide-react";
+import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fmtClinic } from "@/lib/format";
 import { PageHeader } from "@/components/admin/page-header";
 import { StatusBadge } from "@/components/admin/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ResolveButton } from "./resolve-button";
+import { ClaimButton, ReleaseButton, ResolveButton } from "../escalation-actions";
 import { cn } from "@/lib/utils";
 import { languageLabel } from "@/lib/languages";
 
@@ -13,11 +15,18 @@ export const dynamic = "force-dynamic";
 
 export default async function ConversationPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const session = await getSession();
+  if (!session) redirect("/login");
   const conv = await db.conversation.findUnique({
     where: { id },
-    include: { patient: true, messages: { orderBy: { createdAt: "asc" } } },
+    include: {
+      patient: true,
+      assignedTo: { select: { id: true, name: true } },
+      messages: { orderBy: { createdAt: "asc" } },
+    },
   });
   if (!conv) notFound();
+  const mine = conv.assignedToId === session.id;
 
   return (
     <div>
@@ -26,8 +35,37 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
         description={`Started ${fmtClinic(conv.startedAt, "Europe/Berlin")}`}
       >
         <StatusBadge status={conv.status} className="text-xs" />
-        {conv.status === "NEEDS_HUMAN" && <ResolveButton conversationId={conv.id} />}
+        {conv.status === "NEEDS_HUMAN" && !conv.assignedToId && (
+          <ClaimButton conversationId={conv.id} label="Take this over" size="default" />
+        )}
+        {conv.status === "NEEDS_HUMAN" && mine && (
+          <>
+            <ResolveButton conversationId={conv.id} />
+            <ReleaseButton conversationId={conv.id} />
+          </>
+        )}
       </PageHeader>
+
+      {conv.status === "NEEDS_HUMAN" && (
+        <div className="mb-4 flex flex-wrap items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-500" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-red-800">
+              The assistant handed this conversation to a human
+            </p>
+            {conv.escalationReason && (
+              <p className="mt-0.5 text-sm text-red-700">{conv.escalationReason}</p>
+            )}
+            <p className="mt-1 text-xs text-red-700/80">
+              {conv.assignedTo
+                ? mine
+                  ? "You are handling this. Mark it handled once the patient has been helped."
+                  : `${conv.assignedTo.name} is handling this.`
+                : "Nobody has taken it yet."}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[1fr_300px]">
         <Card>
@@ -90,11 +128,10 @@ export default async function ConversationPage({ params }: { params: Promise<{ i
                   <span className="font-mono text-xs">{conv.externalId}</span>
                 </div>
               )}
-              {conv.escalationReason && (
-                <div className="rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
-                  {conv.escalationReason}
-                </div>
-              )}
+              <div>
+                <span className="text-muted-foreground">Handled by: </span>
+                {conv.assignedTo ? (mine ? "you" : conv.assignedTo.name) : "nobody yet"}
+              </div>
             </CardContent>
           </Card>
         </div>

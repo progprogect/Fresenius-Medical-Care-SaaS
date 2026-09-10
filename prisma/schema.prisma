@@ -22,6 +22,8 @@ model User {
   role         UserRole @default(STAFF)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  claimedConversations Conversation[] @relation("ConversationAssignee")
 }
 
 // ============ Catalog ============
@@ -185,7 +187,15 @@ model Conversation {
   startedAt         DateTime            @default(now())
   endedAt           DateTime?
 
+  // Set when a staff member takes an escalated conversation off the queue,
+  // so two people never pick up the same patient.
+  assignedToId String?
+  assignedTo   User?     @relation("ConversationAssignee", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedAt   DateTime?
+
   messages Message[]
+
+  @@index([status, startedAt])
 }
 
 enum MessageRole {

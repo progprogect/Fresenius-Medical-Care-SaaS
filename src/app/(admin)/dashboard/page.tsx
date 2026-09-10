@@ -26,8 +26,8 @@ export default async function DashboardPage() {
       db.slotOffer.count({ where: { status: { in: ["PENDING", "SENT"] } } }),
       db.conversation.findMany({
         where: { status: "NEEDS_HUMAN" },
-        include: { patient: true },
-        orderBy: { startedAt: "desc" },
+        include: { patient: true, assignedTo: { select: { name: true } } },
+        orderBy: [{ assignedToId: "asc" }, { startedAt: "desc" }],
         take: 5,
       }),
       db.appointment.findMany({
@@ -119,11 +119,15 @@ export default async function DashboardPage() {
               )}
               {escalations.map((c) => (
                 <Link key={c.id} href={`/conversations/${c.id}`} className="block rounded-md border p-3 transition-colors hover:border-primary/40">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">
                       {c.patient ? `${c.patient.firstName} ${c.patient.lastName}` : "Unidentified caller"}
                     </span>
-                    <StatusBadge status={c.status} />
+                    {c.assignedTo ? (
+                      <span className="shrink-0 text-xs text-muted-foreground">{c.assignedTo.name}</span>
+                    ) : (
+                      <span className="shrink-0 text-xs font-medium text-red-600">nobody yet</span>
+                    )}
                   </div>
                   <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{c.escalationReason}</p>
                 </Link>

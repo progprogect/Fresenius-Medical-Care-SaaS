@@ -21,6 +21,11 @@ See README.md and docs/ARCHITECTURE.md first.
   patient already said. Phone numbers and dates of birth are parsed tolerantly in
   `src/lib/patient-input.ts`; when a value is unclear the agent reads back its understanding for
   a yes/no instead of asking for a repeat.
+- Escalations: `escalate_to_human` sets `Conversation.status = NEEDS_HUMAN`. Staff claim one
+  through `claimConversationAction`, which is first-come and writes `assignedToId`; the queue is
+  pinned above the conversation log and is never hidden by the filters.
+- `getSession` checks the user still exists in the database, so a removed account loses access
+  immediately and a stale session cannot be written as a foreign key.
 - Languages: ElevenLabs refuses a multilingual TTS model while the agent's primary language is
   `en`, so the primary must be a non-English market language (German) with English configured as
   an additional one. `syncElevenLabsAgent` picks `eleven_turbo_v2_5`, builds `language_presets`

@@ -48,18 +48,23 @@ export async function destroySession() {
   jar.delete(COOKIE_NAME);
 }
 
+/**
+ * Resolves the signed-in user. The cookie alone is not enough: an account
+ * removed since the token was issued must lose access immediately, and a
+ * session pointing at a user that no longer exists would otherwise blow up
+ * anything that writes their id as a foreign key.
+ */
 export async function getSession(): Promise<SessionUser | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE_NAME)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    return {
-      id: payload.sub as string,
-      email: payload.email as string,
-      name: payload.name as string,
-      role: payload.role as UserRole,
-    };
+    const user = await db.user.findUnique({
+      where: { id: payload.sub as string },
+      select: { id: true, email: true, name: true, role: true },
+    });
+    return user ?? null;
   } catch {
     return null;
   }

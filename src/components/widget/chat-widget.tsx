@@ -19,6 +19,8 @@ type ChatMsg = {
   role: "user" | "assistant";
   text: string;
   kind?: "voice";
+  /** The placeholder greeting shown before any real turn happened. */
+  seeded?: boolean;
 };
 
 type SlotCard = { slotRef: string; when: string; doctor: string; clinic: string };
@@ -58,7 +60,14 @@ function ChatWidgetInner() {
     },
     onMessage: (msg: { message: string; source: "user" | "ai" }) => {
       const role = msg.source === "user" ? "user" : "assistant";
-      setMessages((prev) => [...prev, { id: nextId(), role, text: msg.message, kind: "voice" }]);
+      setMessages((prev) => {
+        const incoming: ChatMsg = { id: nextId(), role, text: msg.message, kind: "voice" };
+        // The voice agent opens with its own greeting, in the caller's language.
+        // Swap it for the placeholder instead of showing both.
+        const onlySeeded = prev.length === 1 && prev[0].seeded;
+        if (onlySeeded && role === "assistant") return [incoming];
+        return [...prev, incoming];
+      });
       if (voiceExternalId.current) {
         fetch("/api/voice/transcript", {
           method: "POST",
@@ -86,7 +95,7 @@ function ChatWidgetInner() {
       .then((r) => r.json())
       .then((cfg: WidgetConfig) => {
         setConfig(cfg);
-        setMessages([{ id: nextId(), role: "assistant", text: cfg.greeting }]);
+        setMessages([{ id: nextId(), role: "assistant", text: cfg.greeting, seeded: true }]);
       })
       .catch(() => {});
   }, []);
@@ -115,7 +124,10 @@ function ChatWidgetInner() {
           localStorage.setItem("clinic-widget-conversation", data.conversationId);
         } catch {}
       }
-      setMessages((prev) => [...prev, { id: nextId(), role: "assistant", text: data.reply }]);
+      setMessages((prev) => [
+        ...prev.map((m) => (m.seeded ? { ...m, seeded: false } : m)),
+        { id: nextId(), role: "assistant", text: data.reply },
+      ]);
       const slotEvent = [...(data.toolEvents as ToolEvent[] ?? [])]
         .reverse()
         .find((e) => e.name === "find_slots" && Array.isArray(e.result) && (e.result as SlotCard[]).length > 0);
